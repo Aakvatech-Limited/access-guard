@@ -26,7 +26,15 @@ app_license = "mit"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/access_guard/css/access_guard.css"
-# app_include_js = "/assets/access_guard/js/access_guard.js"
+app_include_js = "/assets/access_guard/js/monitoring_notice.js"
+
+# boot_session: stamp bootinfo with an "am I ephemeral?" flag derived from
+# the grant file (never a DB flag) + the monitoring-notice text.
+boot_session = "access_guard.boot.boot_session"
+
+# on_logout: immediate teardown of an ephemeral session so it doesn't
+# linger until the next reaper tick; records the logout reason.
+on_logout = "access_guard.reaper.teardown_on_logout"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/access_guard/css/access_guard.css"
@@ -137,34 +145,35 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"*": {
+		"validate": [
+			"access_guard.session_guard.validate",
+		],
+		"before_submit": "access_guard.session_guard.before_submit",
+		"before_cancel": "access_guard.session_guard.before_cancel",
+		"on_trash": [
+			"access_guard.session_guard.on_trash",
+			"access_guard.always_log.on_trash",
+		],
+		"on_update": "access_guard.always_log.on_update",
+	}
+}
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"access_guard.tasks.all"
-# 	],
-# 	"daily": [
-# 		"access_guard.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"access_guard.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"access_guard.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"access_guard.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"cron": {
+		# ~15 min reaper, per BUILD_PLAN.md task 4.
+		"*/15 * * * *": [
+			"access_guard.reaper.reap_idle_sessions",
+		],
+	},
+	"hourly": [
+		"access_guard.sync.sync_hourly",
+	],
+}
 
 # Testing
 # -------
@@ -196,8 +205,8 @@ app_license = "mit"
 
 # Request Events
 # ----------------
-# before_request = ["access_guard.utils.before_request"]
-# after_request = ["access_guard.utils.after_request"]
+before_request = ["access_guard.request_hooks.before_request"]
+after_request = ["access_guard.request_hooks.after_request"]
 
 # Job Events
 # ----------
