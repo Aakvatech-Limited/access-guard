@@ -26,7 +26,9 @@ class TestKeypair:
 	def mint_grant_token(
 		self,
 		*,
-		user_name: str = "Jane Doe",
+		user_first_name: str = "Jane",
+		user_middle_name: str | None = None,
+		user_last_name: str = "Doe",
 		user_email: str = "jane.doe@example.com",
 		transport_token: str = "test-transport-token-12345",
 		jti: str | None = None,
@@ -38,7 +40,9 @@ class TestKeypair:
 		now = datetime.now(timezone.utc) + timedelta(seconds=issued_delta_seconds)
 		exp = now + timedelta(seconds=ttl_seconds)
 		claims = {
-			"user_name": user_name,
+			"user_first_name": user_first_name,
+			"user_middle_name": user_middle_name,
+			"user_last_name": user_last_name,
 			"user_email": user_email,
 			"aud": transport_token_hash(transport_token),
 			"iat": now.isoformat(),

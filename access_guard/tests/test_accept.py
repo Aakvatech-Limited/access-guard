@@ -106,7 +106,10 @@ class TestAccept(FrappeTestCase):
 
 	def test_valid_token_creates_user_and_grant_file(self):
 		token = self.keypair.mint_grant_token(
-			user_name="Jane Doe", user_email="jane.doe@example.com", transport_token=TRANSPORT_TOKEN
+			user_first_name="Jane",
+			user_last_name="Doe",
+			user_email="jane.doe@example.com",
+			transport_token=TRANSPORT_TOKEN,
 		)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)

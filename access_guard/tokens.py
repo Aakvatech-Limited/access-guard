@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 import pyseto
 from pyseto import Key
 
+from access_guard.config_utils import get_guard_conf
 from access_guard.constants import CLOCK_SKEW_LEEWAY_SECONDS
 from access_guard.protocol import (
 	CLAIM_PV,
@@ -37,6 +38,15 @@ def _load_public_key(paserk_public_key: str) -> Key:
 		return Key.from_paserk(paserk_public_key)
 	except Exception as e:
 		raise TokenSignatureError(f"invalid public key configuration: {e}")
+
+
+def verify_hub_token(token: str) -> dict:
+	"""verify_and_decode against the hub's configured public key — the one
+	verification path shared by both guest endpoints (accept's grant token,
+	receive_policy's policy token). Raises ClientNotConfiguredError if the
+	guard's own config is incomplete."""
+	public_key = get_guard_conf()["access_guard_hub_public_key"]
+	return verify_and_decode(token, public_key)
 
 
 def verify_and_decode(token: str, paserk_public_key: str) -> dict:
@@ -83,7 +93,7 @@ def _check_exp(claims: dict) -> None:
 	if not exp:
 		raise TokenMalformedError("missing exp claim")
 	try:
-		exp_dt = _parse_iso(exp)
+		exp_dt = parse_iso(exp)
 	except (ValueError, TypeError) as e:
 		raise TokenMalformedError(f"invalid exp claim: {e}")
 
@@ -92,7 +102,7 @@ def _check_exp(claims: dict) -> None:
 		raise TokenExpiredError(f"token expired at {exp}")
 
 
-def _parse_iso(value: str) -> datetime:
+def parse_iso(value: str) -> datetime:
 	dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
 	if dt.tzinfo is None:
 		dt = dt.replace(tzinfo=timezone.utc)

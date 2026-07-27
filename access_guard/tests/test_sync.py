@@ -4,6 +4,7 @@ log push/retention are gated on policy.log_sync_enabled."""
 import os
 from unittest.mock import patch
 
+import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from access_guard.config_utils import logs_dir, policy_path
@@ -29,7 +30,7 @@ class TestSyncHourly(FrappeTestCase):
 
 		with (
 			patch("access_guard.sync.pull_policy", return_value=token),
-			patch("access_guard.policy._get_public_key", return_value=self.keypair.public_paserk),
+			patch.dict(frappe.conf, {"access_guard_hub_public_key": self.keypair.public_paserk}),
 			patch("access_guard.sync.reap_disabled_and_blacklisted") as mock_reap,
 			patch("access_guard.sync._push_all_logs") as mock_push,
 			patch("access_guard.sync._enforce_retention") as mock_retention,
@@ -47,7 +48,7 @@ class TestSyncHourly(FrappeTestCase):
 
 		with (
 			patch("access_guard.sync.pull_policy", return_value=token),
-			patch("access_guard.policy._get_public_key", return_value=self.keypair.public_paserk),
+			patch.dict(frappe.conf, {"access_guard_hub_public_key": self.keypair.public_paserk}),
 			patch("access_guard.sync.reap_disabled_and_blacklisted") as mock_reap,
 			patch("access_guard.sync._push_all_logs") as mock_push,
 			patch("access_guard.sync._enforce_retention") as mock_retention,

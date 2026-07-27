@@ -6,6 +6,7 @@ with a simple flock per shared file.
 """
 
 import os
+from datetime import timedelta, timezone
 
 import frappe
 
@@ -17,7 +18,9 @@ from access_guard.config_utils import (
 	safe_jti_path,
 	used_jti_path,
 )
+from access_guard.constants import CLOCK_SKEW_LEEWAY_SECONDS
 from access_guard.protocol import TokenReplayError
+from access_guard.tokens import parse_iso
 
 
 def is_jti_used(jti: str) -> bool:
@@ -25,12 +28,16 @@ def is_jti_used(jti: str) -> bool:
 	return jti in data
 
 
-def mark_jti_used(jti: str) -> None:
+def mark_jti_used(jti: str, exp: str) -> None:
 	"""Atomically check-and-set. Raises TokenReplayError if already used.
 
 	Locked so two concurrent accept() calls for the same jti can't both
 	pass the check before either writes (the actual replay-prevention
-	guarantee, not just a convenience wrapper).
+	guarantee, not just a convenience wrapper). Also prunes entries whose
+	token `exp` (+ clock-skew leeway) has passed, while the lock is already
+	held and the file is already being rewritten - a jti can only ever be
+	replayed while its grant token still verifies, so once exp has passed it
+	is dead weight and there's no need for a separate scheduled cleanup.
 	"""
 	path = used_jti_path()
 	lock_path = path + ".lock"
@@ -38,8 +45,21 @@ def mark_jti_used(jti: str) -> None:
 		data = read_json(path, default={})
 		if jti in data:
 			raise TokenReplayError(f"jti already used: {jti}")
-		data[jti] = frappe.utils.now_datetime().isoformat()
+		now = frappe.utils.now_datetime().replace(tzinfo=timezone.utc)
+		data = {existing_jti: entry for existing_jti, entry in data.items() if not _is_expired(entry, now)}
+		data[jti] = {"exp": exp}
 		atomic_write_json(path, data)
+
+
+def _is_expired(entry, now) -> bool:
+	exp = entry.get("exp") if isinstance(entry, dict) else None
+	if not exp:
+		return True  # legacy entry (no exp recorded) or malformed - drop it
+	try:
+		exp_dt = parse_iso(exp)
+	except (ValueError, TypeError):
+		return True
+	return now > exp_dt + timedelta(seconds=CLOCK_SKEW_LEEWAY_SECONDS)
 
 
 def grant_file_path(jti: str) -> str:

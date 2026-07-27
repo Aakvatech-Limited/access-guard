@@ -31,7 +31,13 @@ GUARD_CONF_HUB_PUBLIC_KEY = "access_guard_hub_public_key"  # paserk k4.public
 GUARD_CONF_TRANSPORT_TOKEN = "access_guard_transport_token"  # min length 8
 
 # Grant token custom claims (PASETO v4.public; iat/exp/aud handled by pyseto).
-CLAIM_USER_NAME = "user_name"
+# Name is sent as its three source parts, not a pre-joined full name - the
+# guard needs first_name/last_name (User's real fields) to provision the
+# ephemeral user, and re-splitting a joined string is lossy for anyone with a
+# middle name or a multi-word first/last name.
+CLAIM_USER_FIRST_NAME = "user_first_name"
+CLAIM_USER_MIDDLE_NAME = "user_middle_name"
+CLAIM_USER_LAST_NAME = "user_last_name"
 CLAIM_USER_EMAIL = "user_email"
 CLAIM_JTI = "jti"
 CLAIM_PV = "pv"

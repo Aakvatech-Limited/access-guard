@@ -9,7 +9,6 @@ import frappe
 
 from access_guard.config_utils import (
 	atomic_write_json,
-	get_guard_conf,
 	locked_file,
 	policy_path,
 	read_json,
@@ -22,18 +21,14 @@ from access_guard.protocol import (
 	PolicyDeniedError,
 	PolicyUnavailableError,
 )
-from access_guard.tokens import verify_and_decode
-
-
-def _get_public_key() -> str:
-	return get_guard_conf()["access_guard_hub_public_key"]
+from access_guard.tokens import verify_hub_token
 
 
 def verify_and_store_policy(policy_token: str) -> dict:
 	"""Verify the policy token's own signature (that IS the authentication
 	for a pushed policy — no transport token needed, per PROTOCOL.md §4)
 	and atomically write {token, policy, verified_at} to POLICY_FILE."""
-	claims = verify_and_decode(policy_token, _get_public_key())
+	claims = verify_hub_token(policy_token)
 
 	# Keep pv; drop only the registered housekeeping claims layered on by pyseto/mint side.
 	policy = {k: v for k, v in claims.items() if k not in ("iat", "exp", "nbf")}
