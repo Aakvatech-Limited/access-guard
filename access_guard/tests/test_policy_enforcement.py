@@ -17,8 +17,8 @@ def _write_fake_grant(jti: str, sid: str, user: str):
 		{
 			"jti": jti,
 			"pv": 1,
-			"emp_name": "Test User",
-			"emp_email": user,
+			"user_name": "Test User",
+			"user_email": user,
 			"user": user,
 			"sid": sid,
 			"issued_at": frappe.utils.now_datetime().isoformat(),

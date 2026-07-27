@@ -53,7 +53,7 @@ Names in `constants.py`; created lazily by `config_utils.private_base_dir()`.
 
 | Path | Contents |
 |------|----------|
-| `grants/<jti>.json` | authoritative grant record (incl. `sid`, `user`, `emp_email`) |
+| `grants/<jti>.json` | authoritative grant record (incl. `sid`, `user`, `user_email`) |
 | `used_jti.json` | replay set — atomic check-and-set under lock in `mark_jti_used` |
 | `policy.json` | `{"token", "policy", "verified_at"}` — read via file, never DB |
 | `logs/<jti>.jsonl` | one append-only JSONL log per session |

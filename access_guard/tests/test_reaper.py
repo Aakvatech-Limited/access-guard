@@ -65,8 +65,8 @@ class TestReaper(FrappeTestCase):
 			{
 				"jti": jti,
 				"pv": 1,
-				"emp_name": "Reap Target",
-				"emp_email": email,
+				"user_name": "Reap Target",
+				"user_email": email,
 				"user": user,
 				"sid": sid,
 				"issued_at": frappe.utils.now_datetime().isoformat(),
@@ -129,8 +129,8 @@ class TestReaper(FrappeTestCase):
 			{
 				"jti": jti,
 				"pv": 1,
-				"emp_name": "Reap Target",
-				"emp_email": email,
+				"user_name": "Reap Target",
+				"user_email": email,
 				"user": user,
 				"sid": sid,
 				"issued_at": frappe.utils.now_datetime().isoformat(),

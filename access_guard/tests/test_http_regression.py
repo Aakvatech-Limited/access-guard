@@ -129,7 +129,7 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 
 	def test_accept_valid_token_over_http_redirects(self):
 		token = self.keypair.mint_grant_token(
-			emp_email="http-accept@example.com", transport_token=TRANSPORT_TOKEN
+			user_email="http-accept@example.com", transport_token=TRANSPORT_TOKEN
 		)
 		self._created_users.append("http-accept@example.com")
 		self.addCleanup(self._delete_grant_artifacts, _decode_claims(token)["jti"])

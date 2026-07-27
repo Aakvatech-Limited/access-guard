@@ -106,7 +106,7 @@ class TestAccept(FrappeTestCase):
 
 	def test_valid_token_creates_user_and_grant_file(self):
 		token = self.keypair.mint_grant_token(
-			emp_name="Jane Doe", emp_email="jane.doe@example.com", transport_token=TRANSPORT_TOKEN
+			user_name="Jane Doe", user_email="jane.doe@example.com", transport_token=TRANSPORT_TOKEN
 		)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)
@@ -128,10 +128,10 @@ class TestAccept(FrappeTestCase):
 		self.assertIsNotNone(record)
 		self.assertEqual(record["user"], "jane.doe@example.com")
 		self.assertIsNotNone(record["sid"])
-		self.assertEqual(record["emp_email"], "jane.doe@example.com")
+		self.assertEqual(record["user_email"], "jane.doe@example.com")
 
 	def test_replay_second_use_rejected(self):
-		token = self.keypair.mint_grant_token(emp_email="replay@example.com")
+		token = self.keypair.mint_grant_token(user_email="replay@example.com")
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)
 		self._created_users.append("replay@example.com")
@@ -145,7 +145,7 @@ class TestAccept(FrappeTestCase):
 	def test_replay_survives_with_used_jti_file_only(self):
 		"""Replay protection must hold even if we simulate the used-jti
 		file being the only surviving state (no reliance on any DB row)."""
-		token = self.keypair.mint_grant_token(emp_email="replay2@example.com")
+		token = self.keypair.mint_grant_token(user_email="replay2@example.com")
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)
 		self._created_users.append("replay2@example.com")
@@ -168,7 +168,7 @@ class TestAccept(FrappeTestCase):
 
 	def test_expired_token_rejected(self):
 		token = self.keypair.mint_grant_token(
-			emp_email="expired@example.com", ttl_seconds=1, issued_delta_seconds=-3600
+			user_email="expired@example.com", ttl_seconds=1, issued_delta_seconds=-3600
 		)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)
@@ -177,7 +177,7 @@ class TestAccept(FrappeTestCase):
 		self.assertFalse(frappe.db.exists("User", "expired@example.com"))
 
 	def test_tampered_token_rejected(self):
-		token = self.keypair.mint_grant_token(emp_email="tampered@example.com")
+		token = self.keypair.mint_grant_token(user_email="tampered@example.com")
 		tampered = self.keypair.tamper(token)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(tampered)
@@ -186,7 +186,7 @@ class TestAccept(FrappeTestCase):
 
 	def test_wrong_audience_rejected(self):
 		token = self.keypair.mint_grant_token(
-			emp_email="wrongaud@example.com", transport_token="a-different-transport-token"
+			user_email="wrongaud@example.com", transport_token="a-different-transport-token"
 		)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)
@@ -195,7 +195,7 @@ class TestAccept(FrappeTestCase):
 		self.assertFalse(frappe.db.exists("User", "wrongaud@example.com"))
 
 	def test_pv_mismatch_rejected(self):
-		token = self.keypair.mint_grant_token(emp_email="badpv@example.com", pv=2)
+		token = self.keypair.mint_grant_token(user_email="badpv@example.com", pv=2)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)
 
@@ -213,7 +213,7 @@ class TestAccept(FrappeTestCase):
 		frappe.db.commit()
 		self._created_users.append(email)
 
-		token = self.keypair.mint_grant_token(emp_email=email, transport_token=TRANSPORT_TOKEN)
+		token = self.keypair.mint_grant_token(user_email=email, transport_token=TRANSPORT_TOKEN)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(token)
 
@@ -233,14 +233,14 @@ class TestAccept(FrappeTestCase):
 		"""A user this guard provisioned (named in a grant file) is reused on a
 		second, distinct grant — not treated as a standing-user collision."""
 		email = "returning@example.com"
-		first = self.keypair.mint_grant_token(emp_email=email, transport_token=TRANSPORT_TOKEN)
+		first = self.keypair.mint_grant_token(user_email=email, transport_token=TRANSPORT_TOKEN)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(first)
 		self._created_users.append(email)
 		self.assertTrue(frappe.db.exists("User", email))
 
 		# A different grant (new jti) for the same, now-ephemeral, email.
-		second = self.keypair.mint_grant_token(emp_email=email, transport_token=TRANSPORT_TOKEN)
+		second = self.keypair.mint_grant_token(user_email=email, transport_token=TRANSPORT_TOKEN)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
 			self._call_accept(second)
 
@@ -252,7 +252,7 @@ class TestAccept(FrappeTestCase):
 			delete_grant(_decode_claims_for_test(tok)["jti"])
 
 	def test_missing_config_rejected(self):
-		token = self.keypair.mint_grant_token(emp_email="noconf@example.com")
+		token = self.keypair.mint_grant_token(user_email="noconf@example.com")
 		# Ensure none of the three required keys are present.
 		with patch.dict(frappe.conf, {}, clear=False):
 			for key in (

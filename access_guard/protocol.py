@@ -31,8 +31,8 @@ GUARD_CONF_HUB_PUBLIC_KEY = "access_guard_hub_public_key"  # paserk k4.public
 GUARD_CONF_TRANSPORT_TOKEN = "access_guard_transport_token"  # min length 8
 
 # Grant token custom claims (PASETO v4.public; iat/exp/aud handled by pyseto).
-CLAIM_EMP_NAME = "emp_name"
-CLAIM_EMP_EMAIL = "emp_email"
+CLAIM_USER_NAME = "user_name"
+CLAIM_USER_EMAIL = "user_email"
 CLAIM_JTI = "jti"
 CLAIM_PV = "pv"
 
@@ -48,7 +48,7 @@ POLICY_RETENTION_DAYS = "retention_days"
 POLICY_PUSH_GRACE_DAYS = "push_grace_days"
 POLICY_NAME_SUFFIX = "name_suffix"  # appended to ephemeral user's last_name, e.g. "(consultant)"
 POLICY_ACCESS_DISABLED = "access_disabled"  # global kill switch: reap every live grant, refuse new ones
-POLICY_BLACKLISTED_EMAILS = "blacklisted_emails"  # emp_email values to reap + refuse, individually
+POLICY_BLACKLISTED_EMAILS = "blacklisted_emails"  # user_email values to reap + refuse, individually
 
 MODE_DENY = "deny"
 MODE_WARN = "warn"

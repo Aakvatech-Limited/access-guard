@@ -91,7 +91,7 @@ def reap_disabled_and_blacklisted() -> None:
 		return
 
 	for jti, record in all_grants().items():
-		if disabled or record.get("emp_email") in blacklist:
+		if disabled or record.get("user_email") in blacklist:
 			_reap_now(jti, record, reason="access_disabled" if disabled else "blacklisted")
 
 
