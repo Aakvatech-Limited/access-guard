@@ -3,12 +3,14 @@
 Client-side enforcement and logging for ephemeral Frappe site access.
 
 Pairs with [Access Hub](https://github.com/Aakvatech-Limited/access-hub), the issuer app that
-mints and signs access grants. See access-hub's
+mints and signs access grants. The **access-hub** repo is authoritative for the shared docs —
 [`docs/DESIGN.md`](https://github.com/Aakvatech-Limited/access-hub/blob/develop/docs/DESIGN.md)
-and
+(design + rationale),
 [`docs/PROTOCOL.md`](https://github.com/Aakvatech-Limited/access-hub/blob/develop/docs/PROTOCOL.md)
-for the shared design and wire protocol (that repo is authoritative for both); this app's own
-[`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) covers guard-specific implementation notes.
+(wire contract), and
+[`docs/OPERATIONS.md`](https://github.com/Aakvatech-Limited/access-hub/blob/develop/docs/OPERATIONS.md)
+(install/enroll/use). This app's own [`docs/GUARD_NOTES.md`](docs/GUARD_NOTES.md) covers
+guard-specific implementation notes.
 
 ### Installation
 
