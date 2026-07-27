@@ -96,8 +96,13 @@ def accept(token: str | None = None):
 
 	report_provisioning(jti=jti, event="created", user=user)
 
+	# Land where Frappe's own post-login would for a system user: the
+	# configured default app (system/user default_app), falling back to /app.
+	# get_default_path reads frappe.session.user, set by _start_session above.
+	from frappe.apps import get_default_path
+
 	frappe.local.response["type"] = "redirect"
-	frappe.local.response["location"] = "/app"
+	frappe.local.response["location"] = get_default_path() or "/app"
 	return
 
 

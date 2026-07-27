@@ -114,10 +114,10 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		body = json.dumps({"token": token}).encode()
 		resp = self._post("access_guard.api.accept", body)
 
-		# accept() sets response type "redirect" -> location "/app" on
-		# success; werkzeug.test.Client doesn't follow redirects by default.
+		# accept() sets a redirect into the app (get_default_path()-based, not a
+		# hardcoded path); werkzeug.test.Client doesn't follow redirects.
 		self.assertEqual(resp.status_code, 302)
-		self.assertTrue(resp.headers.get("Location", "").endswith("/app"))
+		self.assertTrue(resp.headers.get("Location", "").startswith("/"))
 		self.assertTrue(frappe.db.exists("User", "http-accept@example.com"))
 
 	@staticmethod
