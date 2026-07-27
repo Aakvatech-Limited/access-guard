@@ -73,7 +73,7 @@ def reap_idle_sessions() -> None:
 				delete_session(sid=row["sid"], user=user, reason="access_guard: idle expiry")
 				live_sids.discard(row["sid"])
 				if row["sid"] == sid:
-					log_session_event(jti, sid, "logout", reason="idle_expired")
+					log_session_event(jti, "logout", reason="idle_expired")
 
 		if not live_sids:
 			_reap_user(jti, record)
@@ -98,10 +98,15 @@ def reap_disabled_and_blacklisted() -> None:
 
 def _reap_now(jti: str, record: dict, *, reason: str) -> None:
 	user = record.get("user")
-	if user:
+	# Belt-and-suspenders, same as _reap_user: `user` comes from a grant
+	# record, which accept() only ever writes for an ephemeral user (a
+	# standing-user collision raises EphemeralUserCollisionError before any
+	# grant is written) - re-checking here means a future refactor can't
+	# accidentally kill sessions for an arbitrary/non-ephemeral user.
+	if user and _is_ephemeral_namespace_safe(user):
 		for row in _live_sessions_for_user(user):
 			delete_session(sid=row["sid"], user=user, reason=f"access_guard: {reason}")
-	log_session_event(jti, record.get("sid"), "logout", reason=reason)
+	log_session_event(jti, "logout", reason=reason)
 	_reap_user(jti, record)
 
 
@@ -114,13 +119,12 @@ def _reap_user(jti: str, record: dict) -> None:
 	recursive call's find_grant_by_sid returns nothing and no-ops.
 	"""
 	user = record.get("user")
-	sid = record.get("sid")
 	is_safe = user and _is_ephemeral_namespace_safe(user)
 	delete_grant(jti)
 	if is_safe and frappe.db.exists("User", user):
 		frappe.delete_doc("User", user, force=True, ignore_permissions=True)
 		frappe.db.commit()
-	log_session_event(jti, sid, "logout", reason="reaped")
+	log_session_event(jti, "logout", reason="reaped")
 	report_provisioning(jti=jti, event="reaped", user=user)
 
 
@@ -156,7 +160,7 @@ def teardown_on_logout(login_manager=None) -> None:
 	if jti is None:
 		return  # not an ephemeral session
 
-	log_session_event(jti, sid, "logout", reason="user_logout")
+	log_session_event(jti, "logout", reason="user_logout")
 
 	remaining = [row for row in _live_sessions_for_user(record.get("user")) if row["sid"] != sid]
 	if not remaining:

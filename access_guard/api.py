@@ -87,12 +87,12 @@ def accept(token: str | None = None):
 			"effective_expiry_seconds": effective_expiry_seconds,
 		},
 	)
-	log_session_event(jti, None, "accepted")
+	log_session_event(jti, "accepted")
 
 	_start_session(user)
 	sid = frappe.session.sid
 	update_grant(jti, sid=sid)
-	log_session_event(jti, sid, "login")
+	log_session_event(jti, "login")
 
 	report_provisioning(jti=jti, event="created", user=user)
 

@@ -16,6 +16,7 @@ from access_guard.config_utils import (
 	pushed_dir,
 	read_json,
 )
+from access_guard.constants import LOG_KIND_DOC, LOG_KIND_REQUEST
 from access_guard.grants import read_grant
 from access_guard.hub_client import announce, pull_policy, push_logs
 from access_guard.policy import get_policy, verify_and_store_policy
@@ -27,14 +28,24 @@ from access_guard.protocol import (
 )
 from access_guard.reaper import reap_disabled_and_blacklisted
 
-
-def _pushed_meta_path(jti: str) -> str:
-	return os.path.join(pushed_dir(), f"{jti}.meta")
+_SUFFIX_BY_KIND = {LOG_KIND_REQUEST: ".log", LOG_KIND_DOC: ".doc.log"}
 
 
-def _mark_pushed(jti: str, received_lines: int) -> None:
+def _jti_and_kind_from_filename(name: str) -> tuple[str, str] | None:
+	if name.endswith(".doc.log"):
+		return name[: -len(".doc.log")], LOG_KIND_DOC
+	if name.endswith(".log"):
+		return name[: -len(".log")], LOG_KIND_REQUEST
+	return None
+
+
+def _pushed_meta_path(jti: str, log_kind: str) -> str:
+	return os.path.join(pushed_dir(), f"{jti}.{log_kind}.meta")
+
+
+def _mark_pushed(jti: str, log_kind: str, received_lines: int) -> None:
 	atomic_write_json(
-		_pushed_meta_path(jti),
+		_pushed_meta_path(jti, log_kind),
 		{
 			"acked": True,
 			"acked_at": frappe.utils.now_datetime().isoformat(),
@@ -43,8 +54,8 @@ def _mark_pushed(jti: str, received_lines: int) -> None:
 	)
 
 
-def _is_acked(jti: str) -> bool:
-	meta = read_json(_pushed_meta_path(jti), default=None)
+def _is_acked(jti: str, log_kind: str) -> bool:
+	meta = read_json(_pushed_meta_path(jti, log_kind), default=None)
 	return bool(meta and meta.get("acked"))
 
 
@@ -67,16 +78,17 @@ def _push_all_logs() -> None:
 	host = frappe.local.site if getattr(frappe.local, "site", None) else frappe.utils.get_url()
 
 	for name in os.listdir(log_dir):
-		if not name.endswith(".jsonl"):
+		parsed = _jti_and_kind_from_filename(name)
+		if parsed is None:
 			continue
-		jti = name[: -len(".jsonl")]
+		jti, log_kind = parsed
 		path = os.path.join(log_dir, name)
 		try:
 			with open(path) as f:
-				ndjson = f.read()
+				lines_text = f.read()
 		except OSError:
 			continue
-		if not ndjson.strip():
+		if not lines_text.strip():
 			continue
 
 		grant = read_grant(jti) or {}
@@ -85,9 +97,9 @@ def _push_all_logs() -> None:
 			"user": grant.get("user"),
 			"issued_at": grant.get("issued_at"),
 		}
-		result = push_logs(jti=jti, host=host, session_meta=session_meta, ndjson=ndjson)
+		result = push_logs(jti=jti, host=host, log_kind=log_kind, session_meta=session_meta, lines=lines_text)
 		if result and result.get("ok"):
-			_mark_pushed(jti, result.get("received_lines", 0))
+			_mark_pushed(jti, log_kind, result.get("received_lines", 0))
 
 
 def _announce() -> None:
@@ -127,9 +139,10 @@ def _enforce_retention(policy: dict) -> None:
 
 	now = frappe.utils.now_datetime()
 	for name in os.listdir(log_dir):
-		if not name.endswith(".jsonl"):
+		parsed = _jti_and_kind_from_filename(name)
+		if parsed is None:
 			continue
-		jti = name[: -len(".jsonl")]
+		jti, log_kind = parsed
 		path = os.path.join(log_dir, name)
 		try:
 			mtime = datetime.fromtimestamp(os.path.getmtime(path))
@@ -137,13 +150,13 @@ def _enforce_retention(policy: dict) -> None:
 			continue
 		age_days = (now - mtime).days
 
-		acked = _is_acked(jti)
+		acked = _is_acked(jti, log_kind)
 		if (acked and age_days > grace_days) or age_days > retention_days:
 			try:
 				os.remove(path)
 			except FileNotFoundError:
 				pass
-			meta_path = _pushed_meta_path(jti)
+			meta_path = _pushed_meta_path(jti, log_kind)
 			try:
 				os.remove(meta_path)
 			except FileNotFoundError:

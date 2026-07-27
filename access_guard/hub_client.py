@@ -35,10 +35,10 @@ def _post(method: str, payload: dict, timeout: int = 15) -> dict | None:
 		return None
 
 
-def push_logs(jti: str, host: str, session_meta: dict, ndjson: str) -> dict | None:
+def push_logs(jti: str, host: str, log_kind: str, session_meta: dict, lines: str) -> dict | None:
 	return _post(
 		"access_hub.api.push_logs",
-		{"jti": jti, "host": host, "session_meta": session_meta, "ndjson": ndjson},
+		{"jti": jti, "host": host, "log_kind": log_kind, "session_meta": session_meta, "lines": lines},
 	)
 
 
@@ -54,6 +54,16 @@ def report_provisioning(jti: str, event: str, user: str | None, ts: str | None =
 	return _post(
 		"access_hub.api.report_provisioning",
 		{"jti": jti, "event": event, "user": user, "ts": ts},
+	)
+
+
+def report_session_event(jti: str, event: str, reason: str | None = None) -> dict | None:
+	"""Immediate (not hourly-batched) push of a session lifecycle event, so
+	the hub's Access Grant reflects accept/login/logout in near-real-time.
+	Always sent - unlike log push, there is no policy opt-out for this."""
+	return _post(
+		"access_hub.api.report_session_event",
+		{"jti": jti, "event": event, "reason": reason},
 	)
 
 

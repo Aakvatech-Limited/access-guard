@@ -38,6 +38,13 @@ class TestAccept(FrappeTestCase):
 		self.addCleanup(self._cleanup_users)
 		self._created_users = []
 
+		# accept()/reaper flows call log_session_event(), which enqueues a
+		# push to the hub via frappe.enqueue - avoid every test actually
+		# queuing/running that job.
+		patcher = patch("frappe.enqueue")
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
 		# accept() performs a REAL programmatic login via LoginManager,
 		# which mutates process-global frappe.local.session/login_manager
 		# for the rest of this worker -- restore both after every test so

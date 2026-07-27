@@ -74,7 +74,10 @@ class TestReaper(FrappeTestCase):
 			},
 		)
 
-		with patch("access_guard.reaper.report_provisioning", return_value=None):
+		with (
+			patch("access_guard.reaper.report_provisioning", return_value=None),
+			patch("frappe.enqueue"),
+		):
 			reap_idle_sessions()
 
 		self.assertFalse(frappe.db.exists("User", email), "ephemeral user should be reaped")
@@ -99,7 +102,10 @@ class TestReaper(FrappeTestCase):
 		old_time = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-100)
 		self._make_session_row(email, sid, old_time)
 
-		with patch("access_guard.reaper.report_provisioning", return_value=None):
+		with (
+			patch("access_guard.reaper.report_provisioning", return_value=None),
+			patch("frappe.enqueue"),
+		):
 			reap_idle_sessions()
 
 		self.assertTrue(frappe.db.exists("User", email), "real client user must never be reaped")
@@ -145,7 +151,10 @@ class TestReaper(FrappeTestCase):
 		self._make_live_grant(email, jti, sid)
 		self._write_policy({"pv": 1, "rules": [], "access_disabled": True})
 
-		with patch("access_guard.reaper.report_provisioning", return_value=None):
+		with (
+			patch("access_guard.reaper.report_provisioning", return_value=None),
+			patch("frappe.enqueue"),
+		):
 			reap_disabled_and_blacklisted()
 
 		self.assertFalse(frappe.db.exists("User", email), "access_disabled must reap live grants")
@@ -163,7 +172,10 @@ class TestReaper(FrappeTestCase):
 			{"pv": 1, "rules": [], "access_disabled": False, "blacklisted_emails": [blacklisted_email]}
 		)
 
-		with patch("access_guard.reaper.report_provisioning", return_value=None):
+		with (
+			patch("access_guard.reaper.report_provisioning", return_value=None),
+			patch("frappe.enqueue"),
+		):
 			reap_disabled_and_blacklisted()
 
 		self.assertFalse(frappe.db.exists("User", blacklisted_email), "blacklisted user must be reaped")
@@ -177,7 +189,10 @@ class TestReaper(FrappeTestCase):
 		self._make_live_grant(email, jti, sid)
 		self._write_policy({"pv": 1, "rules": [], "access_disabled": False, "blacklisted_emails": []})
 
-		with patch("access_guard.reaper.report_provisioning", return_value=None):
+		with (
+			patch("access_guard.reaper.report_provisioning", return_value=None),
+			patch("frappe.enqueue"),
+		):
 			reap_disabled_and_blacklisted()
 
 		self.assertTrue(frappe.db.exists("User", email))

@@ -1,7 +1,9 @@
 """before_request / after_request hooks: log every whitelisted call for an
-ephemeral session (PROTOCOL.md §7). Safe HTTP verbs (GET/HEAD/OPTIONS) are
-skipped unless policy.log_reads is on — a mutating user action always arrives
-via an unsafe verb, so this is a reliable, version-proof signal (no per-endpoint
+ephemeral session (PROTOCOL.md §7), one line per call written from
+after_request (before_request only stashes what's needed — there is no
+separate "attempt" line). Safe HTTP verbs (GET/HEAD/OPTIONS) are skipped
+unless policy.log_reads is on — a mutating user action always arrives via
+an unsafe verb, so this is a reliable, version-proof signal (no per-endpoint
 denylist, no reliance on frappe.db.transaction_writes).
 """
 
@@ -32,15 +34,22 @@ def _current_sid() -> str | None:
 		return None
 
 
+def _request_body() -> str:
+	try:
+		return frappe.request.get_data(as_text=True) or ""
+	except Exception:
+		return ""
+
+
 def before_request():
 	method = _resolve_method_name()
 	if not method:
 		return
-	sid = _current_sid()
-	if not sid:
+	if not _current_sid():
 		return
 	frappe.local.access_guard_request_method = method
-	log_request(sid, method, _http_method(), "attempt", dict(frappe.form_dict))
+	frappe.local.access_guard_request_http_method = _http_method()
+	frappe.local.access_guard_request_body = _request_body()
 
 
 def after_request(response=None):
@@ -50,6 +59,8 @@ def after_request(response=None):
 	sid = _current_sid()
 	if not sid:
 		return
+
+	code = None
 	status = "ok"
 	try:
 		code = getattr(response, "status_code", None)
@@ -57,4 +68,7 @@ def after_request(response=None):
 			status = "error"
 	except Exception:
 		pass
-	log_request(sid, method, _http_method(), status, dict(frappe.form_dict))
+
+	http_method = getattr(frappe.local, "access_guard_request_http_method", "")
+	body = getattr(frappe.local, "access_guard_request_body", "")
+	log_request(sid, method, http_method, status, code, body)

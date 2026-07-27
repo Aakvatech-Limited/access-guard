@@ -98,10 +98,10 @@ class TestPolicyEnforcement(FrappeTestCase):
 				todo.insert(ignore_permissions=True)
 				frappe.db.commit()  # trigger after_commit callbacks
 
-			log_path = _log_path_for(self, "warn-jti-1")
+			log_path = _log_path_for("warn-jti-1")
 			with open(log_path) as f:
 				lines = f.readlines()
-			self.assertTrue(any('"type": "doc"' in line for line in lines))
+			self.assertTrue(any("event=create" in line and "doctype=ToDo" in line for line in lines))
 		finally:
 			if original is not None:
 				atomic_write_json(path, original)
@@ -109,7 +109,7 @@ class TestPolicyEnforcement(FrappeTestCase):
 				os.remove(path)
 
 
-def _log_path_for(testcase, jti):
+def _log_path_for(jti):
 	from access_guard.logging_ import log_file_path
 
-	return log_file_path(jti)
+	return log_file_path(jti, "doc")

@@ -10,7 +10,7 @@ sid appears in a grant file. Policy is read from the file, never the DB.
 import frappe
 
 from access_guard.grants import find_grant_by_sid
-from access_guard.logging_ import doc_diff, log_doc_event
+from access_guard.logging_ import log_doc_event
 from access_guard.policy import enforce
 from access_guard.protocol import MODE_WARN, PolicyDeniedError
 
@@ -59,7 +59,7 @@ def _register_after_commit_log(doc, action: str, jti: str) -> None:
 	sid = frappe.session.sid
 
 	def _log():
-		log_doc_event(sid, doc.doctype, doc.name, action, doc_diff(doc))
+		log_doc_event(sid, doc.doctype, doc.name, action, doc.as_dict())
 
 	frappe.db.after_commit.add(_log)
 

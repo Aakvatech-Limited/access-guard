@@ -131,9 +131,10 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		if jti in used:
 			del used[jti]
 			atomic_write_json(used_jti_path(), used)
-		log_path = log_file_path(jti)
-		if os.path.exists(log_path):
-			os.remove(log_path)
+		for kind in ("request", "doc"):
+			log_path = log_file_path(jti, kind)
+			if os.path.exists(log_path):
+				os.remove(log_path)
 
 	def test_accept_malformed_token_over_http_returns_error_shape_not_crash(self):
 		body = json.dumps({"token": "not-a-real-paseto-token"}).encode()
