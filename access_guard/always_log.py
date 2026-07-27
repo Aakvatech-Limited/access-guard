@@ -7,13 +7,20 @@ channel that always knows the doctype, catching a sensitive write even if
 it rode a whitelisted *read* method (e.g. a bulk-edit dialog backed by a
 "get" call).
 
-log_doc_event() itself already no-ops for non-ephemeral sessions (no jti
-maps to the current sid), so this hook is safe to register unconditionally
-for every save/delete of a listed doctype.
+Registered for doctype "*" (every save/delete on the site, not just
+ephemeral sessions - e.g. Administrator edits, the scheduler, even
+frappe.log_error()'s own Error Log insert). get_policy() can now raise
+(no silent POLICY_DEFAULTS fallback) and pull-and-verify synchronously on
+a cache miss, so it must never run for a request that isn't even a granted
+session - check find_grant_by_sid FIRST (cheap, local, can't recurse) and
+only touch policy once we know this is a real ephemeral session, which by
+construction already has a policy cached (accept() pulls one before a
+grant can exist).
 """
 
 import frappe
 
+from access_guard.grants import find_grant_by_sid
 from access_guard.logging_ import log_doc_event
 from access_guard.policy import get_policy
 from access_guard.protocol import POLICY_ALWAYS_LOG_DOCTYPES
@@ -25,11 +32,12 @@ def _is_always_log_doctype(doctype: str) -> bool:
 
 
 def on_update(doc, method=None):
-	if not _is_always_log_doctype(doc.doctype):
-		return
 	try:
 		sid = frappe.session.sid
 	except Exception:
+		return
+	jti, _grant = find_grant_by_sid(sid)
+	if jti is None or not _is_always_log_doctype(doc.doctype):
 		return
 
 	def _log():
@@ -39,11 +47,12 @@ def on_update(doc, method=None):
 
 
 def on_trash(doc, method=None):
-	if not _is_always_log_doctype(doc.doctype):
-		return
 	try:
 		sid = frappe.session.sid
 	except Exception:
+		return
+	jti, _grant = find_grant_by_sid(sid)
+	if jti is None or not _is_always_log_doctype(doc.doctype):
 		return
 
 	def _log():

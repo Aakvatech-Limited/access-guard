@@ -15,7 +15,6 @@ import frappe
 from frappe.sessions import delete_session, get_expiry_in_seconds
 
 from access_guard.grants import all_grants, delete_grant
-from access_guard.hub_client import report_provisioning
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy
 from access_guard.protocol import (
@@ -125,7 +124,6 @@ def _reap_user(jti: str, record: dict) -> None:
 		frappe.delete_doc("User", user, force=True, ignore_permissions=True)
 		frappe.db.commit()
 	log_session_event(jti, "logout", reason="reaped")
-	report_provisioning(jti=jti, event="reaped", user=user)
 
 
 def _is_ephemeral_namespace_safe(user: str) -> bool:

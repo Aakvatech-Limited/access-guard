@@ -2,13 +2,16 @@
 verification order mandated by PROTOCOL.md §3."""
 
 import json
+import os
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from access_guard.config_utils import atomic_write_json, policy_path
 from access_guard.grants import read_grant
 from access_guard.protocol import (
+	POLICY_DEFAULTS,
 	ClientNotConfiguredError,
 	EphemeralUserCollisionError,
 	ProtocolVersionError,
@@ -38,6 +41,21 @@ class TestAccept(FrappeTestCase):
 		self.addCleanup(self._cleanup_users)
 		self._created_users = []
 
+		# accept() calls get_policy(), which raises PolicyUnavailableError
+		# rather than silently falling back to defaults if nothing is
+		# cached - stub an already-verified policy file directly (bypassing
+		# signature verification, which needs frappe.conf patched with this
+		# keypair - each test does that itself, scoped narrower than setUp).
+		atomic_write_json(
+			policy_path(),
+			{
+				"token": "n/a",
+				"policy": dict(POLICY_DEFAULTS),
+				"verified_at": frappe.utils.now_datetime().isoformat(),
+			},
+		)
+		self.addCleanup(self._remove_policy_file)
+
 		# accept()/reaper flows call log_session_event(), which enqueues a
 		# push to the hub via frappe.enqueue - avoid every test actually
 		# queuing/running that job.
@@ -59,6 +77,10 @@ class TestAccept(FrappeTestCase):
 	def _restore_session(self):
 		frappe.local.session = self._orig_session
 		frappe.local.login_manager = self._orig_login_manager
+
+	def _remove_policy_file(self):
+		if os.path.exists(policy_path()):
+			os.remove(policy_path())
 
 	def _cleanup_users(self):
 		for user in self._created_users:

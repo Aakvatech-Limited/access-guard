@@ -14,12 +14,13 @@ from access_guard.config_utils import (
 	policy_path,
 	read_json,
 )
+from access_guard.hub_client import pull_policy
 from access_guard.protocol import (
 	MODE_DENY,
 	MODE_WARN,
-	POLICY_DEFAULTS,
 	POLICY_RULES,
 	PolicyDeniedError,
+	PolicyUnavailableError,
 )
 from access_guard.tokens import verify_and_decode
 
@@ -49,15 +50,24 @@ def verify_and_store_policy(policy_token: str) -> dict:
 
 
 def get_policy() -> dict:
-	"""Read the policy from file. Falls back to POLICY_DEFAULTS if no
-	policy has ever been received (e.g. brand-new install) — never reads
-	from the DB."""
+	"""Read the policy from file — never reads from the DB, never falls back
+	to defaults (those are the hub's install-seed values only; a guard must
+	always enforce a real policy). If nothing has ever been received (e.g.
+	brand-new install, before the first accept()/hourly sync), pull and
+	verify one synchronously. Raises PolicyUnavailableError if that also
+	fails - there is no silent fallback."""
 	record = read_json(policy_path(), default=None)
 	if record and isinstance(record.get("policy"), dict):
-		merged = dict(POLICY_DEFAULTS)
-		merged.update(record["policy"])
-		return merged
-	return dict(POLICY_DEFAULTS)
+		return record["policy"]
+
+	token = pull_policy()
+	if not token:
+		raise PolicyUnavailableError("No policy cached and the hub could not be reached.")
+	try:
+		record = verify_and_store_policy(token)
+	except Exception as e:
+		raise PolicyUnavailableError(f"Pulled policy failed verification: {e}") from e
+	return record["policy"]
 
 
 def match_rule(doctype: str, action: str) -> dict | None:

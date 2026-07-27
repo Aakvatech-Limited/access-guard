@@ -43,7 +43,7 @@ POLICY_SESSION_EXPIRY_SECONDS = "session_expiry_seconds"  # default 6h; effectiv
 POLICY_ALWAYS_LOG_DOCTYPES = "always_log_doctypes"
 POLICY_MAX_KEY_SIZE_BYTES = "max_key_size_bytes"
 POLICY_LOG_READS = "log_reads"
-POLICY_LOG_SYNC_ENABLED = "log_sync_enabled"  # gates the guard's hourly log push/announce/retention only
+POLICY_LOG_SYNC_ENABLED = "log_sync_enabled"  # gates the guard's hourly log push/retention only
 POLICY_RETENTION_DAYS = "retention_days"
 POLICY_PUSH_GRACE_DAYS = "push_grace_days"
 POLICY_NAME_SUFFIX = "name_suffix"  # appended to ephemeral user's last_name, e.g. "(consultant)"
@@ -130,6 +130,14 @@ class TransportAuthError(AccessProtocolError):
 class PolicyDeniedError(AccessProtocolError):
 	code = "policy_denied"
 	http_status = 403
+
+
+class PolicyUnavailableError(AccessProtocolError):
+	# No policy has ever been received AND a synchronous pull also failed -
+	# the guard must never fall back to POLICY_DEFAULTS (those are the hub's
+	# install-seed values only, never a guard-side fallback).
+	code = "policy_unavailable"
+	http_status = 503
 
 
 class EphemeralUserCollisionError(AccessProtocolError):

@@ -74,6 +74,28 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		update_site_config("access_guard_hub_public_key", self.keypair.public_paserk)
 		update_site_config("access_guard_transport_token", TRANSPORT_TOKEN)
 
+		# accept() calls get_policy(), which raises PolicyUnavailableError
+		# rather than silently falling back to defaults if nothing is
+		# cached - stub an already-verified policy file directly (no real
+		# hub to pull from over this fake URL).
+		from access_guard.config_utils import atomic_write_json, policy_path
+		from access_guard.protocol import POLICY_DEFAULTS
+
+		self._policy_path = policy_path()
+		atomic_write_json(
+			self._policy_path,
+			{
+				"token": "n/a",
+				"policy": dict(POLICY_DEFAULTS),
+				"verified_at": frappe.utils.now_datetime().isoformat(),
+			},
+		)
+		self.addCleanup(self._remove_policy_file)
+
+	def _remove_policy_file(self):
+		if os.path.exists(self._policy_path):
+			os.remove(self._policy_path)
+
 	@staticmethod
 	def _restore_site_config(config_path, original_config):
 		with open(config_path, "w") as f:

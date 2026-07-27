@@ -2,7 +2,7 @@
 
 All calls are best-effort from the guard's perspective except where noted;
 a failure here must never raise into a request/response cycle that isn't
-itself the sync job (e.g. report_provisioning from the reaper should not
+itself the sync job (e.g. report_session_event from the reaper should not
 blow up the reaper if the hub is briefly unreachable).
 """
 
@@ -35,26 +35,8 @@ def _post(method: str, payload: dict, timeout: int = 15) -> dict | None:
 		return None
 
 
-def push_logs(jti: str, host: str, log_kind: str, session_meta: dict, lines: str) -> dict | None:
-	return _post(
-		"access_hub.api.push_logs",
-		{"jti": jti, "host": host, "log_kind": log_kind, "session_meta": session_meta, "lines": lines},
-	)
-
-
-def announce(host: str, port: int, protocol: str, app_version: str, pv: int) -> dict | None:
-	return _post(
-		"access_hub.api.announce",
-		{"host": host, "port": port, "protocol": protocol, "app_version": app_version, "pv": pv},
-	)
-
-
-def report_provisioning(jti: str, event: str, user: str | None, ts: str | None = None) -> dict | None:
-	ts = ts or frappe.utils.now_datetime().isoformat()
-	return _post(
-		"access_hub.api.report_provisioning",
-		{"jti": jti, "event": event, "user": user, "ts": ts},
-	)
+def push_logs(jti: str, log_kind: str, lines: str) -> dict | None:
+	return _post("access_hub.api.push_logs", {"jti": jti, "log_kind": log_kind, "lines": lines})
 
 
 def report_session_event(jti: str, event: str, reason: str | None = None) -> dict | None:

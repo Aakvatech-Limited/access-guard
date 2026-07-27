@@ -9,7 +9,6 @@ import frappe
 from access_guard.config_utils import get_guard_conf
 from access_guard.errors import guest_api
 from access_guard.grants import mark_jti_used, update_grant, write_grant
-from access_guard.hub_client import report_provisioning
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy, verify_and_store_policy
 from access_guard.protocol import (
@@ -93,8 +92,6 @@ def accept(token: str | None = None):
 	sid = frappe.session.sid
 	update_grant(jti, sid=sid)
 	log_session_event(jti, "login")
-
-	report_provisioning(jti=jti, event="created", user=user)
 
 	# Land where Frappe's own post-login would for a system user: the
 	# configured default app (system/user default_app), falling back to /app.
