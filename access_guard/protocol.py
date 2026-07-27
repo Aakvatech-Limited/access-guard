@@ -23,6 +23,13 @@ PV = 1
 # `ingest_endpoint` is the ONLY place this token is ever checked.
 TRANSPORT_TOKEN_HEADER = "X-Access-Guard-Transport-Token"
 
+# Guard site_config.json keys (the enrollment contract). Shared because the hub
+# emits them and the guard reads them. The `access_guard_` prefix marks them as
+# living in the GUARD's site_config (the hub's own keys are `access_hub_*`).
+GUARD_CONF_HUB_URL = "access_guard_hub_url"
+GUARD_CONF_HUB_PUBLIC_KEY = "access_guard_hub_public_key"  # paserk k4.public
+GUARD_CONF_TRANSPORT_TOKEN = "access_guard_transport_token"  # min length 8
+
 # Grant token custom claims (PASETO v4.public; iat/exp/aud handled by pyseto).
 CLAIM_EMP_NAME = "emp_name"
 CLAIM_EMP_EMAIL = "emp_email"

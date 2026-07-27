@@ -2,9 +2,18 @@
 access_hub (contrast with protocol.py, which IS vendored verbatim)."""
 
 # --- site_config.json keys (guard side) -------------------------------------
-CONF_HUB_URL = "access_guard_hub_url"
-CONF_HUB_PUBLIC_KEY = "access_guard_hub_public_key"  # paserk k4.public
-CONF_TRANSPORT_TOKEN = "access_guard_transport_token"  # min length 8
+# The key strings themselves live in the vendored protocol.py (the hub emits
+# them, the guard reads them — shared vocabulary). Aliased here under the
+# guard's short CONF_* names.
+from access_guard.protocol import (
+	GUARD_CONF_HUB_PUBLIC_KEY as CONF_HUB_PUBLIC_KEY,
+)
+from access_guard.protocol import (
+	GUARD_CONF_HUB_URL as CONF_HUB_URL,
+)
+from access_guard.protocol import (
+	GUARD_CONF_TRANSPORT_TOKEN as CONF_TRANSPORT_TOKEN,
+)
 
 REQUIRED_GUARD_CONF = (CONF_HUB_URL, CONF_HUB_PUBLIC_KEY, CONF_TRANSPORT_TOKEN)
 
