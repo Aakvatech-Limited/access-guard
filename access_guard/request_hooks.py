@@ -1,13 +1,17 @@
 """before_request / after_request hooks: log every whitelisted call for an
-ephemeral session (PROTOCOL.md §7), minus READ_SKIP_METHODS when
-policy.log_reads is off. Fail-open to logging: anything not on the
-read-skip list is logged, no separate write-list, no reliance on
-frappe.db.transaction_writes (unreliable per DESIGN.md).
+ephemeral session (PROTOCOL.md §7). Safe HTTP verbs (GET/HEAD/OPTIONS) are
+skipped unless policy.log_reads is on — a mutating user action always arrives
+via an unsafe verb, so this is a reliable, version-proof signal (no per-endpoint
+denylist, no reliance on frappe.db.transaction_writes).
 """
 
 import frappe
 
 from access_guard.logging_ import log_request
+
+
+def _http_method() -> str:
+	return getattr(frappe.request, "method", "") or ""
 
 
 def _resolve_method_name() -> str | None:
@@ -36,7 +40,7 @@ def before_request():
 	if not sid:
 		return
 	frappe.local.access_guard_request_method = method
-	log_request(sid, method, "attempt", dict(frappe.form_dict))
+	log_request(sid, method, _http_method(), "attempt", dict(frappe.form_dict))
 
 
 def after_request(response=None):
@@ -53,4 +57,4 @@ def after_request(response=None):
 			status = "error"
 	except Exception:
 		pass
-	log_request(sid, method, status, dict(frappe.form_dict))
+	log_request(sid, method, _http_method(), status, dict(frappe.form_dict))

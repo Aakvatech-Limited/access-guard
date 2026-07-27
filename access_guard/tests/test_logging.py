@@ -1,6 +1,6 @@
 """Tests for per-session JSONL logging (PROTOCOL.md §7):
-- a READ_SKIP_METHODS call is not logged when log_reads is off,
-- a non-read call is logged,
+- a safe-verb (GET) call is not logged when log_reads is off,
+- an unsafe-verb (POST) call is logged,
 - a rolled-back always-log write produces no `doc` line, a committed one does.
 """
 
@@ -58,23 +58,24 @@ class TestLogging(FrappeTestCase):
 		with open(path) as f:
 			return [json.loads(line) for line in f if line.strip()]
 
-	def test_read_skip_method_not_logged_when_log_reads_off(self):
+	def test_safe_verb_not_logged_when_log_reads_off(self):
 		from access_guard.request_hooks import before_request
 
-		jti = "log-jti-readskip"
+		jti = "log-jti-safeverb"
 		sid = self._fake_session(jti)
 
-		frappe.utils.set_request(method="GET", path="/api/method/frappe.client.get_list")
+		# GET is a safe verb -> skipped even for an endpoint that could write.
+		frappe.utils.set_request(method="GET", path="/api/method/frappe.client.save")
 		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
 			before_request()
 
 		lines = self._read_lines(jti)
 		self.assertEqual(lines, [])
 
-	def test_non_read_method_is_logged(self):
+	def test_unsafe_verb_is_logged(self):
 		from access_guard.request_hooks import before_request
 
-		jti = "log-jti-nonread"
+		jti = "log-jti-unsafeverb"
 		sid = self._fake_session(jti)
 
 		frappe.utils.set_request(method="POST", path="/api/method/frappe.client.save")
@@ -85,6 +86,7 @@ class TestLogging(FrappeTestCase):
 		self.assertEqual(len(lines), 1)
 		self.assertEqual(lines[0]["type"], "request")
 		self.assertEqual(lines[0]["method"], "frappe.client.save")
+		self.assertEqual(lines[0]["http_method"], "POST")
 
 	def test_rolled_back_write_produces_no_doc_line(self):
 		from access_guard.always_log import on_update
