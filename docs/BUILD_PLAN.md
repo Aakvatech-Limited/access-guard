@@ -1,10 +1,11 @@
 # access-guard — build plan (v1)
 
 > **Parallel scope.** You own **access-guard only**. Do not edit access-hub. The wire contract is
-> frozen in [`docs/PROTOCOL.md`](PROTOCOL.md) and the shared code in
-> [`access_guard/protocol.py`](../access_guard/protocol.py) — implement against them; do not change
-> them without a coordinated change to the hub's identical copy. Full design rationale is in
-> [`docs/DESIGN.md`](DESIGN.md).
+> frozen in access-hub's [`docs/PROTOCOL.md`](https://github.com/Aakvatech-Limited/access-hub/blob/develop/docs/PROTOCOL.md)
+> and the shared code in [`access_guard/protocol.py`](../access_guard/protocol.py) — implement
+> against them; do not change the latter without a coordinated change to the hub's identical copy.
+> Full design rationale is in access-hub's
+> [`docs/DESIGN.md`](https://github.com/Aakvatech-Limited/access-hub/blob/develop/docs/DESIGN.md).
 
 The guard runs on the (attacker-controlled) client site. **No client-DB trust:** all
 integrity-critical state lives in **files** under `site/private/access_guard/` (paths in
@@ -94,7 +95,8 @@ import from it; use the vendored `access_guard.protocol`.
    `(acked AND age > push_grace_days) OR age > retention_days`.
 
 7. **Monitoring notice.** `boot_session` sets an "ephemeral?" flag from the grant file;
-   `app_include_js` renders a slim bar with `policy.monitoring_notice_text`. No desk DOM internals.
+   `app_include_js` renders a slim bar with static notice text (not hub-configurable in v1).
+   No desk DOM internals.
 
 ## Tests (`bench run-tests`)
 Put tests under `access_guard/access_guard/tests/` (add `__init__.py`). Use `FrappeTestCase`.

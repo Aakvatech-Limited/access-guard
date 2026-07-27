@@ -1,6 +1,14 @@
 ### Access Guard
 
-Client-side enforcement and logging for ephemeral Frappe site access
+Client-side enforcement and logging for ephemeral Frappe site access.
+
+Pairs with [Access Hub](https://github.com/Aakvatech-Limited/access-hub), the issuer app that
+mints and signs access grants. See access-hub's
+[`docs/DESIGN.md`](https://github.com/Aakvatech-Limited/access-hub/blob/develop/docs/DESIGN.md)
+and
+[`docs/PROTOCOL.md`](https://github.com/Aakvatech-Limited/access-hub/blob/develop/docs/PROTOCOL.md)
+for the shared design and wire protocol (that repo is authoritative for both); this app's own
+[`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) covers guard-specific implementation notes.
 
 ### Installation
 
@@ -8,7 +16,7 @@ You can install this app using the [bench](https://github.com/frappe/bench) CLI:
 
 ```bash
 cd $PATH_TO_YOUR_BENCH
-bench get-app $URL_OF_THIS_REPO --branch develop
+bench get-app https://github.com/Aakvatech-Limited/access-guard --branch develop
 bench install-app access_guard
 ```
 

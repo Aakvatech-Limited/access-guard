@@ -4,8 +4,6 @@ accept          allow_guest=True   the grant token redemption path
 receive_policy  allow_guest=True   best-effort policy push from the hub
 """
 
-from __future__ import annotations
-
 import frappe
 
 from access_guard.config_utils import get_guard_conf
@@ -15,148 +13,147 @@ from access_guard.hub_client import report_provisioning
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy, verify_and_store_policy
 from access_guard.protocol import (
-    CLAIM_EMP_EMAIL,
-    CLAIM_EMP_NAME,
-    CLAIM_JTI,
-    POLICY_SESSION_EXPIRY_SECONDS,
-    TokenAudienceError,
-    TokenMalformedError,
-    transport_token_hash,
+	CLAIM_EMP_EMAIL,
+	CLAIM_EMP_NAME,
+	CLAIM_JTI,
+	POLICY_NAME_SUFFIX,
+	POLICY_SESSION_EXPIRY_SECONDS,
+	TokenAudienceError,
+	TokenMalformedError,
+	transport_token_hash,
 )
 from access_guard.tokens import verify_and_decode
-
-NAME_SUFFIX = "consultant"
 
 
 @guest_api
 def accept(token: str | None = None):
-    """Grant acceptance endpoint. Verifies in the exact PROTOCOL.md §3
-    order (malformed -> signature -> pv -> exp -> aud -> jti-replay), then
-    provisions the ephemeral user + session and redirects into desk.
+	"""Grant acceptance endpoint. Verifies in the exact PROTOCOL.md §3
+	order (malformed -> signature -> pv -> exp -> aud -> jti-replay), then
+	provisions the ephemeral user + session and redirects into desk.
 
-    Any AccessProtocolError raised here is turned into the standard error
-    response by the @guest_api decorator — just raise and return.
-    """
-    conf = get_guard_conf()  # ClientNotConfiguredError if incomplete
+	Any AccessProtocolError raised here is turned into the standard error
+	response by the @guest_api decorator — just raise and return.
+	"""
+	conf = get_guard_conf()  # ClientNotConfiguredError if incomplete
 
-    # steps 1-4: parse, signature, pv, exp
-    claims = verify_and_decode(token, conf["access_guard_hub_public_key"])
+	# steps 1-4: parse, signature, pv, exp
+	claims = verify_and_decode(token, conf["access_guard_hub_public_key"])
 
-    # step 5: aud == transport_token_hash(local token)
-    expected_aud = transport_token_hash(conf["access_guard_transport_token"])
-    if claims.get("aud") != expected_aud:
-        raise TokenAudienceError("grant token audience does not match this client")
+	# step 5: aud == transport_token_hash(local token)
+	expected_aud = transport_token_hash(conf["access_guard_transport_token"])
+	if claims.get("aud") != expected_aud:
+		raise TokenAudienceError("grant token audience does not match this client")
 
-    # step 6: jti replay (file-backed; check-and-set is atomic)
-    jti = claims.get(CLAIM_JTI)
-    if not jti:
-        raise TokenMalformedError("missing jti claim")
-    mark_jti_used(jti)
+	# step 6: jti replay (file-backed; check-and-set is atomic)
+	jti = claims.get(CLAIM_JTI)
+	if not jti:
+		raise TokenMalformedError("missing jti claim")
+	mark_jti_used(jti)
 
-    emp_email = claims.get(CLAIM_EMP_EMAIL)
-    emp_name = claims.get(CLAIM_EMP_NAME)
-    if not emp_email:
-        raise TokenMalformedError("missing emp_email claim")
+	emp_email = claims.get(CLAIM_EMP_EMAIL)
+	emp_name = claims.get(CLAIM_EMP_NAME)
+	if not emp_email:
+		raise TokenMalformedError("missing emp_email claim")
 
-    # Everything from here on is trusted (the token verified above), so the
-    # rest of provisioning — user create/reuse, policy read, grant write —
-    # runs as Administrator rather than Guest (allow_guest=True means
-    # frappe.session.user is still "Guest" at this point). _start_session
-    # below performs the real login and moves frappe.session.user off
-    # Administrator onto the ephemeral user itself, so there's no separate
-    # "restore" step needed — the Administrator window ends exactly where
-    # the real session begins. (Deliberate: created-by-Guest audit stamps
-    # and any User-controller logic keyed on frappe.session.user are both
-    # wrong outcomes we don't want, not just a permission check to bypass.)
-    frappe.set_user("Administrator")
+	# Everything from here on is trusted (the token verified above), so the
+	# rest of provisioning — user create/reuse, policy read, grant write —
+	# runs as Administrator rather than Guest (allow_guest=True means
+	# frappe.session.user is still "Guest" at this point). _start_session
+	# below performs the real login and moves frappe.session.user off
+	# Administrator onto the ephemeral user itself, so there's no separate
+	# "restore" step needed — the Administrator window ends exactly where
+	# the real session begins. (Deliberate: created-by-Guest audit stamps
+	# and any User-controller logic keyed on frappe.session.user are both
+	# wrong outcomes we don't want, not just a permission check to bypass.)
+	frappe.set_user("Administrator")
 
-    user = _create_or_reuse_ephemeral_user(emp_email, emp_name)
+	policy = get_policy()
+	user = _create_or_reuse_ephemeral_user(emp_email, emp_name, policy.get(POLICY_NAME_SUFFIX))
 
-    policy = get_policy()
-    effective_expiry_seconds = int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
+	effective_expiry_seconds = int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
 
-    issued_at = frappe.utils.now_datetime().isoformat()
-    write_grant(
-        jti,
-        {
-            "jti": jti,
-            "pv": claims.get("pv"),
-            "emp_name": emp_name,
-            "emp_email": emp_email,
-            "user": user,
-            "sid": None,
-            "issued_at": issued_at,
-            "effective_expiry_seconds": effective_expiry_seconds,
-        },
-    )
-    log_session_event(jti, None, "accepted")
+	issued_at = frappe.utils.now_datetime().isoformat()
+	write_grant(
+		jti,
+		{
+			"jti": jti,
+			"pv": claims.get("pv"),
+			"emp_name": emp_name,
+			"emp_email": emp_email,
+			"user": user,
+			"sid": None,
+			"issued_at": issued_at,
+			"effective_expiry_seconds": effective_expiry_seconds,
+		},
+	)
+	log_session_event(jti, None, "accepted")
 
-    _start_session(user)
-    sid = frappe.session.sid
-    update_grant(jti, sid=sid)
-    log_session_event(jti, sid, "login")
+	_start_session(user)
+	sid = frappe.session.sid
+	update_grant(jti, sid=sid)
+	log_session_event(jti, sid, "login")
 
-    report_provisioning(jti=jti, event="created", user=user)
+	report_provisioning(jti=jti, event="created", user=user)
 
-    frappe.local.response["type"] = "redirect"
-    frappe.local.response["location"] = "/app"
-    return
+	frappe.local.response["type"] = "redirect"
+	frappe.local.response["location"] = "/app"
+	return
 
 
-def _create_or_reuse_ephemeral_user(emp_email: str, emp_name: str | None):
-    """Idempotent create keyed on emp_email. full_name is generated by
-    Frappe from first_name/last_name, so the name suffix is appended to
-    last_name -> e.g. "John Doe (consultant)". Caller (accept) has already
-    switched to Administrator before calling this — no ignore_permissions
-    needed, and owner/modified_by are correctly stamped Administrator, not
-    Guest."""
-    if frappe.db.exists("User", emp_email):
-        return emp_email
+def _create_or_reuse_ephemeral_user(emp_email: str, emp_name: str | None, name_suffix: str):
+	"""Idempotent create keyed on emp_email. full_name is generated by
+	Frappe from first_name/last_name, so the hub-configured name suffix is
+	appended to last_name -> e.g. "John Doe (consultant)". Caller (accept)
+	has already switched to Administrator before calling this — no
+	ignore_permissions needed, and owner/modified_by are correctly stamped
+	Administrator, not Guest."""
+	if frappe.db.exists("User", emp_email):
+		return emp_email
 
-    first_name, _, last_name = (emp_name or emp_email).partition(" ")
-    last_name = last_name or ""
-    suffixed_last_name = f"{last_name} ({NAME_SUFFIX})".strip() if last_name else f"({NAME_SUFFIX})"
+	first_name, _, last_name = (emp_name or emp_email).partition(" ")
+	last_name = last_name or ""
+	suffixed_last_name = f"{last_name} ({name_suffix})".strip() if last_name else f"({name_suffix})"
 
-    user_doc = frappe.new_doc("User")
-    user_doc.email = emp_email
-    user_doc.first_name = first_name or emp_email
-    user_doc.last_name = suffixed_last_name
-    user_doc.send_welcome_email = 0
-    user_doc.enabled = 1
-    user_doc.user_type = "System User"
-    user_doc.simultaneous_sessions = 1
-    user_doc.insert()
-    from frappe.core.doctype.user.user import get_all_roles
+	user_doc = frappe.new_doc("User")
+	user_doc.email = emp_email
+	user_doc.first_name = first_name or emp_email
+	user_doc.last_name = suffixed_last_name
+	user_doc.send_welcome_email = 0
+	user_doc.enabled = 1
+	user_doc.user_type = "System User"
+	user_doc.simultaneous_sessions = 1
+	user_doc.insert()
+	from frappe.core.doctype.user.user import get_all_roles
 
-    user_doc.add_roles(*get_all_roles())
-    frappe.db.commit()
-    return user_doc.name
+	user_doc.add_roles(*get_all_roles())
+	frappe.db.commit()
+	return user_doc.name
 
 
 def _start_session(user: str) -> None:
-    """Programmatic login, following the pattern used by
-    frappe/integrations/doctype/ldap_settings for a verified-out-of-band
-    identity: assign login_manager.user directly and run post_login().
+	"""Programmatic login, following the pattern used by
+	frappe/integrations/doctype/ldap_settings for a verified-out-of-band
+	identity: assign login_manager.user directly and run post_login().
 
-    frappe.local.login_manager only exists inside a real HTTP request
-    (HTTPRequest.set_session instantiates it); under bench console/tests
-    there is no request, so create one on demand rather than assuming it's
-    always present.
-    """
-    if not getattr(frappe.local, "login_manager", None):
-        from frappe.auth import LoginManager
+	frappe.local.login_manager only exists inside a real HTTP request
+	(HTTPRequest.set_session instantiates it); under bench console/tests
+	there is no request, so create one on demand rather than assuming it's
+	always present.
+	"""
+	if not getattr(frappe.local, "login_manager", None):
+		from frappe.auth import LoginManager
 
-        frappe.local.login_manager = LoginManager()
-    frappe.local.login_manager.user = user
-    frappe.local.login_manager.post_login()
-    frappe.db.commit()
+		frappe.local.login_manager = LoginManager()
+	frappe.local.login_manager.user = user
+	frappe.local.login_manager.post_login()
+	frappe.db.commit()
 
 
 @guest_api
 def receive_policy(policy_token: str | None = None):
-    """Best-effort policy push from the hub. Authenticated entirely by the
-    policy token's own signature (PROTOCOL.md §4) — no transport token
-    needed, since anyone who could forge this token could forge anything.
-    """
-    verify_and_store_policy(policy_token)
-    return {"ok": True}
+	"""Best-effort policy push from the hub. Authenticated entirely by the
+	policy token's own signature (PROTOCOL.md §4) — no transport token
+	needed, since anyone who could forge this token could forge anything.
+	"""
+	verify_and_store_policy(policy_token)
+	return {"ok": True}
