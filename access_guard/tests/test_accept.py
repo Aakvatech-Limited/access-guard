@@ -10,6 +10,7 @@ from frappe.tests.utils import FrappeTestCase
 from access_guard.grants import read_grant
 from access_guard.protocol import (
 	ClientNotConfiguredError,
+	EphemeralUserCollisionError,
 	ProtocolVersionError,
 	TokenAudienceError,
 	TokenExpiredError,
@@ -69,6 +70,9 @@ class TestAccept(FrappeTestCase):
 
 		frappe.utils.set_request(method="GET", path="/api/method/access_guard.api.accept")
 		frappe.local.cookie_manager = CookieManager()
+		# Each real HTTP request gets a fresh response; mirror that so a prior
+		# call's error/redirect can't leak into this one's assertions.
+		frappe.local.response = frappe._dict()
 		return accept(token=token)
 
 	def test_valid_token_creates_user_and_grant_file(self):
@@ -167,6 +171,56 @@ class TestAccept(FrappeTestCase):
 			self._call_accept(token)
 
 		self.assertEqual(frappe.local.response.get("error", {}).get("code"), ProtocolVersionError.code)
+
+	def test_standing_user_collision_rejected(self):
+		"""A grant for an email that already belongs to a NON-ephemeral user
+		must be refused — no session, no grant file — with a 409 collision."""
+		email = "standing.user@example.com"
+		standing = frappe.new_doc("User")
+		standing.email = email
+		standing.first_name = "Standing"
+		standing.send_welcome_email = 0
+		standing.insert(ignore_permissions=True)
+		frappe.db.commit()
+		self._created_users.append(email)
+
+		token = self.keypair.mint_grant_token(emp_email=email, transport_token=TRANSPORT_TOKEN)
+		with patch.dict(frappe.conf, _conf(self.keypair)):
+			self._call_accept(token)
+
+		self.assertEqual(
+			frappe.local.response.get("error", {}).get("code"),
+			EphemeralUserCollisionError.code,
+		)
+		self.assertEqual(
+			frappe.local.response.get("http_status_code"),
+			EphemeralUserCollisionError.http_status,
+		)
+		# no grant file was written for this jti
+		claims = _decode_claims_for_test(token)
+		self.assertIsNone(read_grant(claims["jti"]))
+
+	def test_returning_ephemeral_user_reused(self):
+		"""A user this guard provisioned (named in a grant file) is reused on a
+		second, distinct grant — not treated as a standing-user collision."""
+		email = "returning@example.com"
+		first = self.keypair.mint_grant_token(emp_email=email, transport_token=TRANSPORT_TOKEN)
+		with patch.dict(frappe.conf, _conf(self.keypair)):
+			self._call_accept(first)
+		self._created_users.append(email)
+		self.assertTrue(frappe.db.exists("User", email))
+
+		# A different grant (new jti) for the same, now-ephemeral, email.
+		second = self.keypair.mint_grant_token(emp_email=email, transport_token=TRANSPORT_TOKEN)
+		with patch.dict(frappe.conf, _conf(self.keypair)):
+			self._call_accept(second)
+
+		self.assertIsNone(frappe.local.response.get("error"))
+		self.assertEqual(frappe.local.response.get("type"), "redirect")
+		from access_guard.grants import delete_grant
+
+		for tok in (first, second):
+			delete_grant(_decode_claims_for_test(tok)["jti"])
 
 	def test_missing_config_rejected(self):
 		token = self.keypair.mint_grant_token(emp_email="noconf@example.com")

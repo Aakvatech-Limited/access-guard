@@ -18,6 +18,7 @@ from access_guard.protocol import (
 	CLAIM_JTI,
 	POLICY_NAME_SUFFIX,
 	POLICY_SESSION_EXPIRY_SECONDS,
+	EphemeralUserCollisionError,
 	TokenAudienceError,
 	TokenMalformedError,
 	transport_token_hash,
@@ -106,8 +107,22 @@ def _create_or_reuse_ephemeral_user(emp_email: str, emp_name: str | None, name_s
 	appended to last_name -> e.g. "John Doe (consultant)". Caller (accept)
 	has already switched to Administrator before calling this — no
 	ignore_permissions needed, and owner/modified_by are correctly stamped
-	Administrator, not Guest."""
+	Administrator, not Guest.
+
+	Reuse is only safe for a user THIS guard provisioned. If the email already
+	belongs to a standing (non-ephemeral) user, refuse — handing them a fresh
+	System Manager session is exactly the standing-access abuse we prevent.
+	Ephemeral membership is grant-file-derived (ephemeral_users()), never a DB
+	flag: a User row exists iff a live grant names them (the reaper deletes both
+	together), so this is the authoritative test."""
 	if frappe.db.exists("User", emp_email):
+		from access_guard.grants import ephemeral_users
+
+		if emp_email not in ephemeral_users():
+			raise EphemeralUserCollisionError(
+				f"{emp_email} is already a standing user on this site; refusing to "
+				"start an ephemeral session for it."
+			)
 		return emp_email
 
 	first_name, _, last_name = (emp_name or emp_email).partition(" ")

@@ -121,6 +121,14 @@ class PolicyDeniedError(AccessProtocolError):
 	http_status = 403
 
 
+class EphemeralUserCollisionError(AccessProtocolError):
+	# The grant's email already belongs to a NON-ephemeral (real, standing) user
+	# on the target site. Never log that user in — the whole point is to avoid
+	# handing out standing accounts. The guard refuses; no session is started.
+	code = "ephemeral_user_collision"
+	http_status = 409
+
+
 def check_pv(value) -> None:
 	"""Raise ProtocolVersionError unless `value` matches this build's PV."""
 	if value != PV:
