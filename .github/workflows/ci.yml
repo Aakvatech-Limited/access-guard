@@ -1,11 +1,14 @@
 
 name: CI
 
+# Auto-triggers disabled during heavy development to save Actions minutes.
+# Re-enable by restoring the push/pull_request triggers below.
 on:
-  push:
-    branches:
-      - develop
-  pull_request:
+  workflow_dispatch:
+  # push:
+  #   branches:
+  #     - develop
+  # pull_request:
 
 concurrency:
   group: develop-access_guard-${{ github.event.number }}
