@@ -56,12 +56,14 @@ class TestKeypair:
 		policy: dict | None = None,
 		pv: int = PV,
 		issued_delta_seconds: int = 0,
+		ttl_seconds: int = 30 * 24 * 60 * 60,
 	) -> str:
 		now = datetime.now(timezone.utc) + timedelta(seconds=issued_delta_seconds)
 		claims = dict(POLICY_DEFAULTS)
 		if policy:
 			claims.update(policy)
 		claims["iat"] = now.isoformat()
+		claims["exp"] = (now + timedelta(seconds=ttl_seconds)).isoformat()
 		claims["pv"] = pv
 		return pyseto.encode(self.secret_key, claims).decode("utf-8")
 

@@ -43,10 +43,12 @@ POLICY_SESSION_EXPIRY_SECONDS = "session_expiry_seconds"  # default 6h; effectiv
 POLICY_ALWAYS_LOG_DOCTYPES = "always_log_doctypes"
 POLICY_MAX_KEY_SIZE_BYTES = "max_key_size_bytes"
 POLICY_LOG_READS = "log_reads"
-POLICY_SYNC_ENABLED = "sync_enabled"
+POLICY_LOG_SYNC_ENABLED = "log_sync_enabled"  # gates the guard's hourly log push/announce/retention only
 POLICY_RETENTION_DAYS = "retention_days"
 POLICY_PUSH_GRACE_DAYS = "push_grace_days"
 POLICY_NAME_SUFFIX = "name_suffix"  # appended to ephemeral user's last_name, e.g. "(consultant)"
+POLICY_ACCESS_DISABLED = "access_disabled"  # global kill switch: reap every live grant, refuse new ones
+POLICY_BLACKLISTED_EMAILS = "blacklisted_emails"  # emp_email values to reap + refuse, individually
 
 MODE_DENY = "deny"
 MODE_WARN = "warn"
@@ -57,10 +59,12 @@ POLICY_DEFAULTS = {
 	POLICY_ALWAYS_LOG_DOCTYPES: ["User", "Server Script"],
 	POLICY_MAX_KEY_SIZE_BYTES: 512 * 1024,
 	POLICY_LOG_READS: False,
-	POLICY_SYNC_ENABLED: True,
+	POLICY_LOG_SYNC_ENABLED: True,
 	POLICY_RETENTION_DAYS: 365,
 	POLICY_PUSH_GRACE_DAYS: 7,
 	POLICY_NAME_SUFFIX: "consultant",
+	POLICY_ACCESS_DISABLED: False,
+	POLICY_BLACKLISTED_EMAILS: [],
 }
 
 

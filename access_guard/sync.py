@@ -1,6 +1,8 @@
-"""Outbound sync scheduler_event (hourly, gated on policy.sync_enabled):
-push per-session logs, announce, pull+reverify policy; enforce local log
-retention. All state referenced here is file-backed, per PROTOCOL.md/DESIGN.md.
+"""Outbound sync scheduler_event (hourly). Policy pull + kill-switch/blacklist
+reaping are unconditional (not configurable in v1, and a disable/blacklist
+change must always reach a guard). Log push, announce, and retention are
+gated on policy.log_sync_enabled. All state referenced here is file-backed,
+per PROTOCOL.md/DESIGN.md.
 """
 
 import os
@@ -17,7 +19,13 @@ from access_guard.config_utils import (
 from access_guard.grants import read_grant
 from access_guard.hub_client import announce, pull_policy, push_logs
 from access_guard.policy import get_policy, verify_and_store_policy
-from access_guard.protocol import POLICY_PUSH_GRACE_DAYS, POLICY_RETENTION_DAYS, PV
+from access_guard.protocol import (
+	POLICY_LOG_SYNC_ENABLED,
+	POLICY_PUSH_GRACE_DAYS,
+	POLICY_RETENTION_DAYS,
+	PV,
+)
+from access_guard.reaper import reap_disabled_and_blacklisted
 
 
 def _pushed_meta_path(jti: str) -> str:
@@ -41,13 +49,13 @@ def _is_acked(jti: str) -> bool:
 
 
 def sync_hourly() -> None:
-	policy = get_policy()
-	if not policy.get("sync_enabled", True):
-		return
+	_pull_and_verify_policy()
 
+	policy = get_policy()
+	if not policy.get(POLICY_LOG_SYNC_ENABLED, True):
+		return
 	_push_all_logs()
 	_announce()
-	_pull_and_verify_policy()
 	_enforce_retention(policy)
 
 
@@ -105,6 +113,8 @@ def _pull_and_verify_policy() -> None:
 		verify_and_store_policy(token)
 	except Exception:
 		frappe.log_error(title="access_guard sync: policy verification failed")
+		return
+	reap_disabled_and_blacklisted()
 
 
 def _enforce_retention(policy: dict) -> None:

@@ -2,13 +2,15 @@
 deleted; a real (non-ephemeral) client user is never touched — namespace
 filter is strictly "users named in grant files"."""
 
+import os
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from access_guard.config_utils import atomic_write_json, policy_path, read_json
 from access_guard.grants import delete_grant, read_grant, write_grant
-from access_guard.reaper import reap_idle_sessions
+from access_guard.reaper import reap_disabled_and_blacklisted, reap_idle_sessions
 
 
 class TestReaper(FrappeTestCase):
@@ -101,3 +103,82 @@ class TestReaper(FrappeTestCase):
 			reap_idle_sessions()
 
 		self.assertTrue(frappe.db.exists("User", email), "real client user must never be reaped")
+
+	def _write_policy(self, policy: dict):
+		path = policy_path()
+		original = read_json(path) if os.path.exists(path) else None
+		atomic_write_json(
+			path,
+			{"token": "n/a", "policy": policy, "verified_at": frappe.utils.now_datetime().isoformat()},
+		)
+
+		def _restore():
+			if original is not None:
+				atomic_write_json(path, original)
+			elif os.path.exists(path):
+				os.remove(path)
+
+		self.addCleanup(_restore)
+
+	def _make_live_grant(self, email, jti, sid):
+		user = self._make_ephemeral_user(email)
+		self._jtis_to_clean.append(jti)
+		self._make_session_row(user, sid, frappe.utils.now_datetime())
+		write_grant(
+			jti,
+			{
+				"jti": jti,
+				"pv": 1,
+				"emp_name": "Reap Target",
+				"emp_email": email,
+				"user": user,
+				"sid": sid,
+				"issued_at": frappe.utils.now_datetime().isoformat(),
+				"effective_expiry_seconds": 3600,
+			},
+		)
+		return user
+
+	def test_access_disabled_reaps_every_live_grant(self):
+		email = "kill-switch-target@example.com"
+		jti, sid = "kill-switch-jti-1", "kill-switch-sid-1"
+		self._make_live_grant(email, jti, sid)
+		self._write_policy({"pv": 1, "rules": [], "access_disabled": True})
+
+		with patch("access_guard.reaper.report_provisioning", return_value=None):
+			reap_disabled_and_blacklisted()
+
+		self.assertFalse(frappe.db.exists("User", email), "access_disabled must reap live grants")
+		self.assertIsNone(read_grant(jti))
+		self.assertFalse(frappe.db.exists("Sessions", {"sid": sid}))
+
+	def test_blacklisted_email_is_reaped_others_untouched(self):
+		blacklisted_email = "blacklisted-target@example.com"
+		safe_email = "not-blacklisted@example.com"
+		b_jti, b_sid = "blacklist-jti-1", "blacklist-sid-1"
+		s_jti, s_sid = "blacklist-jti-2", "blacklist-sid-2"
+		self._make_live_grant(blacklisted_email, b_jti, b_sid)
+		self._make_live_grant(safe_email, s_jti, s_sid)
+		self._write_policy(
+			{"pv": 1, "rules": [], "access_disabled": False, "blacklisted_emails": [blacklisted_email]}
+		)
+
+		with patch("access_guard.reaper.report_provisioning", return_value=None):
+			reap_disabled_and_blacklisted()
+
+		self.assertFalse(frappe.db.exists("User", blacklisted_email), "blacklisted user must be reaped")
+		self.assertIsNone(read_grant(b_jti))
+		self.assertTrue(frappe.db.exists("User", safe_email), "non-blacklisted user must be untouched")
+		self.assertIsNotNone(read_grant(s_jti))
+
+	def test_no_disabled_or_blacklist_is_a_noop(self):
+		email = "unaffected@example.com"
+		jti, sid = "noop-jti-1", "noop-sid-1"
+		self._make_live_grant(email, jti, sid)
+		self._write_policy({"pv": 1, "rules": [], "access_disabled": False, "blacklisted_emails": []})
+
+		with patch("access_guard.reaper.report_provisioning", return_value=None):
+			reap_disabled_and_blacklisted()
+
+		self.assertTrue(frappe.db.exists("User", email))
+		self.assertIsNotNone(read_grant(jti))

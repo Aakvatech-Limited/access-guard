@@ -18,7 +18,11 @@ from access_guard.grants import all_grants, delete_grant
 from access_guard.hub_client import report_provisioning
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy
-from access_guard.protocol import POLICY_SESSION_EXPIRY_SECONDS
+from access_guard.protocol import (
+	POLICY_ACCESS_DISABLED,
+	POLICY_BLACKLISTED_EMAILS,
+	POLICY_SESSION_EXPIRY_SECONDS,
+)
 
 
 def _effective_expiry_seconds() -> int:
@@ -73,6 +77,32 @@ def reap_idle_sessions() -> None:
 
 		if not live_sids:
 			_reap_user(jti, record)
+
+
+def reap_disabled_and_blacklisted() -> None:
+	"""Called right after a policy is (re)verified — both on the guest-allowed
+	push (`receive_policy`) and the guaranteed hourly pull (`sync_hourly`) —
+	so a kill-switch or blacklist takes effect immediately, not just at the
+	next idle-expiry tick. Unlike reap_idle_sessions, ignores idle state
+	entirely: a matching grant is reaped regardless of its last activity."""
+	policy = get_policy()
+	blacklist = set(policy.get(POLICY_BLACKLISTED_EMAILS) or [])
+	disabled = bool(policy.get(POLICY_ACCESS_DISABLED))
+	if not disabled and not blacklist:
+		return
+
+	for jti, record in all_grants().items():
+		if disabled or record.get("emp_email") in blacklist:
+			_reap_now(jti, record, reason="access_disabled" if disabled else "blacklisted")
+
+
+def _reap_now(jti: str, record: dict, *, reason: str) -> None:
+	user = record.get("user")
+	if user:
+		for row in _live_sessions_for_user(user):
+			delete_session(sid=row["sid"], user=user, reason=f"access_guard: {reason}")
+	log_session_event(jti, record.get("sid"), "logout", reason=reason)
+	_reap_user(jti, record)
 
 
 def _reap_user(jti: str, record: dict) -> None:

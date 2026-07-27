@@ -175,5 +175,8 @@ def receive_policy(policy_token: str | None = None):
 	policy token's own signature (PROTOCOL.md §4) — no transport token
 	needed, since anyone who could forge this token could forge anything.
 	"""
+	from access_guard.reaper import reap_disabled_and_blacklisted
+
 	verify_and_store_policy(policy_token)
+	reap_disabled_and_blacklisted()
 	return {"ok": True}
