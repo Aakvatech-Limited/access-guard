@@ -15,7 +15,7 @@ which must stay byte-identical to the hub's copy — coordinate any change.
 ## Conventions
 
 - Whitelisted endpoints live in `api.py` → called as `access_guard.api.<fn>`.
-- **Guest endpoints use `@guest_api` (`errors.py`), never raw
+- **Guest endpoints use `@_ingest_api` (`api.py`), never raw
   `@frappe.whitelist(allow_guest=True)`.** It whitelists internally *and* catches
   any `AccessProtocolError` once, turning it into the PROTOCOL §5 `{"error": {...}}`
   response with the class's `http_status`. Handlers just `raise` the right subclass
@@ -23,8 +23,8 @@ which must stay byte-identical to the hub's copy — coordinate any change.
   `receive_policy`, and any new guest endpoint.
 - Integrity-critical writes are **atomic** (temp file + `fsync` + `os.rename`) under a
   **per-file flock**, via `config_utils` (`atomic_write_json`, `locked_file`). Logs are
-  **append-only**, plain open-append-close (`append_line`) — deliberately not a buffered
-  logger (low-volume human ops; a leaked fd is worse than a re-open per line).
+  **append-only**, open-append-close per line (`append_line`) — no persistent handle
+  held between writes.
 - Secrets/config come from `frappe.conf` only (`get_guard_conf` validates the three
   `REQUIRED_GUARD_CONF` keys). Never a DocType, never the DB.
 
@@ -53,11 +53,12 @@ Names in `constants.py`; created lazily by `config_utils.private_base_dir()`.
 
 | Path | Contents |
 |------|----------|
-| `grants/<jti>.json` | authoritative grant record (incl. `sid`, `user`, `user_email`) |
+| `grants.json` | one shared file, `{jti: record, ...}` — authoritative grant records (incl. `sid`, `user`, `user_email`) |
 | `used_jti.json` | replay set — atomic check-and-set under lock in `mark_jti_used` |
 | `policy.json` | `{"token", "policy", "verified_at"}` — read via file, never DB |
-| `logs/<jti>.jsonl` | one append-only JSONL log per session |
-| `pushed/<jti>.meta` | push-ack state for retention |
+| `logs/<jti>.request.log` | one append-only logfmt log per session, one line per whitelisted call |
+| `logs/<jti>.doc.log` | one append-only logfmt log per session, one line per doc event |
+| `pushed/<jti>.<kind>.meta` | push-ack state for retention (`pushed_bytes`, `acked_at`), one per log kind |
 
 `jti` is validated by `safe_jti_path` before use as a path component (it's
 attacker-influenced pre-verification): alnum/`-`/`_` only, with a realpath-containment check.

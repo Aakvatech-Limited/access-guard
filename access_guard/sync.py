@@ -118,7 +118,12 @@ def _enforce_retention(policy: dict) -> None:
 	along with the acked prefix. Past retention_days it's deleted regardless
 	(backstop for a file that never gets fully pushed, e.g. push_logs failing
 	permanently) - v2 concern: truncating just the acked prefix so an
-	active session's log doesn't grow unbounded in the meantime."""
+	active session's log doesn't grow unbounded in the meantime.
+
+	The stat-then-remove below is locked against the same `path + ".lock"`
+	append_line() takes (config_utils.py), so a write racing in right as a
+	file crosses into grace/retention can't be silently destroyed by the
+	delete."""
 	retention_days = int(policy.get(POLICY_RETENTION_DAYS) or 365)
 	grace_days = int(policy.get(POLICY_PUSH_GRACE_DAYS) or 7)
 
@@ -133,23 +138,27 @@ def _enforce_retention(policy: dict) -> None:
 			continue
 		jti, log_kind = parsed
 		path = os.path.join(log_dir, name)
-		try:
-			stat = os.stat(path)
-		except OSError:
-			continue
 
-		fully_acked = _pushed_bytes(jti, log_kind) >= stat.st_size
-		acked_at = _acked_at(jti, log_kind)
-		grace_elapsed = acked_at is not None and (now - acked_at).days > grace_days
+		with locked_file(path + ".lock"):
+			try:
+				stat = os.stat(path)
+			except OSError:
+				continue
 
-		mtime = datetime.fromtimestamp(stat.st_mtime)
-		age_days = (now - mtime).days
+			fully_acked = _pushed_bytes(jti, log_kind) >= stat.st_size
+			acked_at = _acked_at(jti, log_kind)
+			grace_elapsed = acked_at is not None and (now - acked_at).days > grace_days
+
+			mtime = datetime.fromtimestamp(stat.st_mtime)
+			age_days = (now - mtime).days
+
+			if (fully_acked and grace_elapsed) or age_days > retention_days:
+				try:
+					os.remove(path)
+				except FileNotFoundError:
+					pass
 
 		if (fully_acked and grace_elapsed) or age_days > retention_days:
-			try:
-				os.remove(path)
-			except FileNotFoundError:
-				pass
 			meta_path = _pushed_meta_path(jti, log_kind)
 			try:
 				os.remove(meta_path)

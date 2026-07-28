@@ -153,7 +153,10 @@ def read_json(path: str, default=None):
 
 def append_line(path: str, line: str) -> None:
 	"""Open-append-close a single line to a log file - opened and closed
-	fresh per call, no persistent handle held between writes."""
+	fresh per call, no persistent handle held between writes. Locked against
+	`path + ".lock"` so a concurrent retention-side delete (sync.py's
+	_enforce_retention, which stats then removes a fully-acked file) can't
+	silently destroy a write racing in between."""
 	os.makedirs(os.path.dirname(path), exist_ok=True)
-	with open(path, "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as f:
+	with locked_file(path + ".lock"), open(path, "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as f:
 		f.write(line if line.endswith("\n") else line + "\n")

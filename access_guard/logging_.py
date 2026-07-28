@@ -76,8 +76,6 @@ def _to_json_per_key(value, max_bytes: int | None = None) -> str | None:
 	whole-value capping (via _capped_value, so a plain string doesn't pick up
 	an extra layer of JSON quoting) for anything that isn't a dict -
 	best-effort, not a parser."""
-	if not value:
-		return
 	if not max_bytes or not isinstance(value, dict):
 		return _capped_value(value, max_bytes)
 	capped = {key: _capped_value(val, max_bytes) for key, val in value.items()}
@@ -148,8 +146,8 @@ def log_request(
 			"http_method": http_method,
 			"status": status,
 			"code": code,
-			"params": _to_json_per_key(params, max_bytes),
-			"body": _to_json_per_key(body, max_bytes),
+			"params": _to_json_per_key(params, max_bytes) if params else None,
+			"body": _to_json_per_key(body, max_bytes) if body else None,
 		},
 	)
 
