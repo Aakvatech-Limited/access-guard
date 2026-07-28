@@ -19,6 +19,12 @@ REQUIRED_GUARD_CONF = (CONF_HUB_URL, CONF_HUB_PUBLIC_KEY, CONF_TRANSPORT_TOKEN)
 
 CLOCK_SKEW_LEEWAY_SECONDS = 60
 
+# Extra grace before a used-jti entry is pruned from the replay store, on top
+# of exp + CLOCK_SKEW_LEEWAY_SECONDS. Keeps the prune bound strictly later than
+# tokens._check_exp's accept bound: a jti forgotten while its token still
+# verifies is a replayable token (see grants._is_expired).
+PRUNE_MARGIN_SECONDS = 300
+
 # --- Redis cache ---------------------------------------------------------
 # Disk (POLICY_FILE) is the durable source of truth; redis is purely an
 # accelerator in front of it, invalidated explicitly on every write

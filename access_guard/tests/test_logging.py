@@ -72,6 +72,26 @@ class TestLogging(FrappeTestCase):
 		self._jtis.append(jti)
 		return sid
 
+	def _stub_policy(self, policy):
+		"""Write `policy` to the policy file for this test only, restoring
+		whatever was there on cleanup. Tests that assert on a policy-driven
+		branch must set that policy - otherwise they silently inherit the
+		live one from disk/redis and pass or fail on the hub's current config."""
+		from access_guard.tests.keys import clear_policy_cache, stub_policy_file
+
+		path = policy_path()
+		original = read_json(path) if os.path.exists(path) else None
+
+		def _restore():
+			if original is not None:
+				atomic_write_json(path, original)
+			elif os.path.exists(path):
+				os.remove(path)
+			clear_policy_cache()
+
+		self.addCleanup(_restore)
+		stub_policy_file(policy)
+
 	def _read_lines(self, jti, kind="request"):
 		path = log_file_path(jti, kind)
 		if not os.path.exists(path):
@@ -84,6 +104,9 @@ class TestLogging(FrappeTestCase):
 
 		jti = "log-jti-safeverb"
 		sid = self._fake_session(jti)
+		# Pin log_reads=False rather than inheriting whatever policy is on disk
+		# - this test is *about* log_reads being off, so it has to set it.
+		self._stub_policy({"pv": 1, "rules": [], "log_reads": False})
 
 		# GET is a safe verb -> skipped even for an endpoint that could write.
 		frappe.utils.set_request(method="GET", path="/api/method/frappe.client.save")

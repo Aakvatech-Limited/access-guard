@@ -27,9 +27,9 @@ from access_guard.constants import (
 	CLOCK_SKEW_LEEWAY_SECONDS,
 	GRANTS_CACHE_KEY,
 	GRANTS_CACHE_TTL_SECONDS,
+	PRUNE_MARGIN_SECONDS,
 )
-from access_guard.protocol import TokenReplayError
-from access_guard.tokens import parse_iso
+from access_guard.protocol import TokenReplayError, parse_iso, utc_now
 
 
 def mark_jti_used(jti: str, exp: str) -> None:
@@ -49,13 +49,22 @@ def mark_jti_used(jti: str, exp: str) -> None:
 		data = read_json(path, default={})
 		if jti in data:
 			raise TokenReplayError(f"jti already used: {jti}")
-		now = frappe.utils.now_datetime().replace(tzinfo=timezone.utc)
+		# utc_now(), never now_datetime().replace(tzinfo=utc) - that mislabels
+		# naive *system-local* time as UTC, so this prune ran on a different
+		# clock than _check_exp's real-UTC accept test. Where they disagreed,
+		# a still-verifiable jti could be pruned and its token replayed.
+		now = utc_now()
 		data = {existing_jti: entry for existing_jti, entry in data.items() if not _is_expired(entry, now)}
 		data[jti] = {"exp": exp}
 		atomic_write_json(path, data)
 
 
 def _is_expired(entry, now) -> bool:
+	"""Is this used-jti entry safe to forget? Deliberately a STRICTLY LATER
+	bound than tokens._check_exp's accept test (same exp + leeway, plus
+	PRUNE_MARGIN_SECONDS): forgetting a jti whose token still verifies would
+	make that token redeemable a second time. The margin means the two can't
+	flip order even if their clocks drift slightly."""
 	exp = entry.get("exp") if isinstance(entry, dict) else None
 	if not exp:
 		return True  # legacy entry (no exp recorded) or malformed - drop it
@@ -63,7 +72,8 @@ def _is_expired(entry, now) -> bool:
 		exp_dt = parse_iso(exp)
 	except (ValueError, TypeError):
 		return True
-	return now > exp_dt + timedelta(seconds=CLOCK_SKEW_LEEWAY_SECONDS)
+	dead_at = exp_dt + timedelta(seconds=CLOCK_SKEW_LEEWAY_SECONDS + PRUNE_MARGIN_SECONDS)
+	return now > dead_at
 
 
 def _grants_lock_path() -> str:

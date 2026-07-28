@@ -6,7 +6,6 @@ see log_session_event.
 """
 
 import json
-from datetime import datetime, timezone
 
 import frappe
 from frappe.auth import SAFE_HTTP_METHODS
@@ -16,7 +15,7 @@ from access_guard.constants import LOG_KIND_DOC, LOG_KIND_REQUEST
 from access_guard.grants import find_grant_by_sid
 from access_guard.hub_client import report_session_event
 from access_guard.policy import get_policy
-from access_guard.protocol import POLICY_LOG_READS, POLICY_MAX_KEY_SIZE_BYTES
+from access_guard.protocol import POLICY_LOG_READS, POLICY_MAX_KEY_SIZE_BYTES, utc_iso
 
 _SUFFIX_BY_KIND = {LOG_KIND_REQUEST: ".request.log", LOG_KIND_DOC: ".doc.log"}
 
@@ -26,7 +25,7 @@ def log_file_path(jti: str, kind: str) -> str:
 
 
 def _now() -> str:
-	return datetime.now(timezone.utc).isoformat()
+	return utc_iso()
 
 
 _TRUNCATED_MARKER = "<truncated>"

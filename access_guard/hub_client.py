@@ -26,12 +26,24 @@ def _headers() -> dict:
 
 
 def _post(method: str, payload: dict, timeout: int = 15) -> dict | None:
+	"""POST and return the handler's own return value, unwrapped from Frappe's
+	`{"message": ...}` envelope (added by frappe.handler for every whitelisted
+	call, POST included) - callers check fields the handler returned, e.g.
+	sync.py's `result.get("ok")`, which silently never matched while this
+	returned the envelope itself.
+
+	`message=` is passed to log_error explicitly: the default (no message)
+	makes Frappe fill the body with a variable-dumping traceback, which
+	includes this module's `headers` local and requests' `kwargs` - i.e. the
+	transport token - into an Error Log row the ephemeral System Manager on
+	this very site can read."""
 	try:
 		resp = requests.post(_hub_url(method), json=payload, headers=_headers(), timeout=timeout)
 		resp.raise_for_status()
-		return resp.json()
-	except Exception:
-		frappe.log_error(title=f"access_guard hub_client: {method} failed")
+		data = resp.json()
+		return data.get("message", data) if isinstance(data, dict) else data
+	except Exception as e:
+		frappe.log_error(title=f"access_guard hub_client: {method} failed", message=str(e)[:1000])
 		return None
 
 
@@ -67,6 +79,7 @@ def pull_policy() -> str | None:
 		if isinstance(payload, str):
 			payload = json.loads(payload)
 		return payload.get("policy_token")
-	except Exception:
-		frappe.log_error(title="access_guard hub_client: pull_policy failed")
+	except Exception as e:
+		# message= for the same token-leak reason as _post.
+		frappe.log_error(title="access_guard hub_client: pull_policy failed", message=str(e)[:1000])
 		return None

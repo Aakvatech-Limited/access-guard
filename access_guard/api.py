@@ -23,6 +23,7 @@ from access_guard.protocol import (
 	TokenAudienceError,
 	TokenMalformedError,
 	transport_token_hash,
+	utc_iso,
 )
 from access_guard.tokens import verify_hub_token
 
@@ -121,7 +122,7 @@ def accept(claims: dict):
 	_start_session(user)
 	sid = frappe.session.sid
 
-	issued_at = frappe.utils.now_datetime().isoformat()
+	issued_at = utc_iso()  # grant file, not a DocType -> UTC
 	write_grant(
 		jti,
 		{

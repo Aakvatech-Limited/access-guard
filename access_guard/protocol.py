@@ -10,10 +10,44 @@ app's own constants.py. Human-readable spec: docs/PROTOCOL.md.
 """
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 
 # Protocol version. Bump on any breaking wire change; a mismatch is a clean
 # ProtocolVersionError, never a best-effort parse.
 PV = 1
+
+# --- Time -------------------------------------------------------------------
+# The wire is UTC-only, and so is anything either side persists to a FILE.
+# DocType Datetime fields keep Frappe's own naive system-local convention -
+# that's what the desk renders - so the two must never be compared directly.
+#
+# Why this is its own vocabulary rather than frappe.utils: now_datetime() is
+# naive *System Settings* local time. Putting that in a claim and reading it
+# as UTC (which is what a bare fromisoformat + "assume UTC" does) shifts every
+# expiry by the emitting site's UTC offset: hours of extra token life east of
+# UTC, and tokens born already-expired west of it.
+
+
+def utc_now() -> datetime:
+	"""Timezone-aware UTC now. The only clock the wire protocol uses."""
+	return datetime.now(timezone.utc)
+
+
+def utc_iso(moment: datetime | None = None, *, seconds: int = 0, days: int = 0) -> str:
+	"""ISO-8601 carrying an explicit +00:00, optionally offset by
+	seconds/days. The receiver never has to guess a timezone."""
+	return ((moment or utc_now()) + timedelta(seconds=seconds, days=days)).isoformat()
+
+
+def parse_iso(value: str) -> datetime:
+	"""Parse a UTC-aware ISO-8601 timestamp. A naive value is REJECTED rather
+	than assumed to be UTC - that assumption is what silently turned a naive
+	system-local `exp` into hours of extra token life. No offset == malformed."""
+	dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+	if dt.tzinfo is None:
+		raise ValueError(f"timestamp is missing a UTC offset: {value!r}")
+	return dt
+
 
 # Deliberately NOT `Authorization`. Frappe's validate_auth() intercepts 2-part
 # Authorization values before any whitelisted method runs, letting them through
@@ -30,7 +64,11 @@ GUARD_CONF_HUB_URL = "access_guard_hub_url"
 GUARD_CONF_HUB_PUBLIC_KEY = "access_guard_hub_public_key"  # paserk k4.public
 GUARD_CONF_TRANSPORT_TOKEN = "access_guard_transport_token"  # min length 8
 
-# Grant token custom claims (PASETO v4.public; iat/exp/aud handled by pyseto).
+# Grant token custom claims (PASETO v4.public). iat/exp/aud are registered
+# claim names, but pyseto only validates them when decode() is given a
+# `deserializer`, which we deliberately don't do - so exp and aud are checked
+# by hand (tokens._check_exp, api.accept). Don't delete those thinking the
+# library covers them.
 # Name is sent as its three source parts, not a pre-joined full name - the
 # guard needs first_name/last_name (User's real fields) to provision the
 # ephemeral user, and re-splitting a joined string is lossy for anyone with a

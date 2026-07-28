@@ -3,8 +3,6 @@ file (never a DocType — an ephemeral System Manager would just edit "deny
 User" away), and answer "what should happen for this doctype+action?".
 """
 
-from datetime import datetime, timezone
-
 import frappe
 
 from access_guard.config_utils import (
@@ -15,7 +13,7 @@ from access_guard.config_utils import (
 )
 from access_guard.constants import POLICY_CACHE_KEY, POLICY_CACHE_TTL_SECONDS
 from access_guard.hub_client import pull_policy
-from access_guard.protocol import POLICY_RULES, PolicyUnavailableError
+from access_guard.protocol import POLICY_RULES, PolicyUnavailableError, utc_iso
 from access_guard.tokens import verify_hub_token
 
 
@@ -34,7 +32,7 @@ def store_verified_policy(claims: dict) -> dict:
 
 	record = {
 		"policy": policy,
-		"verified_at": datetime.now(timezone.utc).isoformat(),
+		"verified_at": utc_iso(),
 	}
 	path = policy_path()
 	with locked_file(path + ".lock"):

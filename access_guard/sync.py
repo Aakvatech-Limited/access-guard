@@ -6,7 +6,7 @@ PROTOCOL.md/DESIGN.md.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import frappe
 
@@ -20,7 +20,14 @@ from access_guard.config_utils import (
 from access_guard.hub_client import pull_policy, push_logs
 from access_guard.logging_ import _SUFFIX_BY_KIND
 from access_guard.policy import get_policy, verify_and_store_policy
-from access_guard.protocol import POLICY_LOG_SYNC_ENABLED, POLICY_PUSH_GRACE_DAYS, POLICY_RETENTION_DAYS
+from access_guard.protocol import (
+	POLICY_LOG_SYNC_ENABLED,
+	POLICY_PUSH_GRACE_DAYS,
+	POLICY_RETENTION_DAYS,
+	parse_iso,
+	utc_iso,
+	utc_now,
+)
 from access_guard.reaper import reap_disabled_and_blacklisted
 
 
@@ -48,8 +55,17 @@ def _pushed_bytes(jti: str, log_kind: str) -> int:
 
 
 def _acked_at(jti: str, log_kind: str) -> datetime | None:
+	"""UTC-aware, or None. Written by _mark_pushed as UTC (meta is a file, not
+	a DocType); parse_iso rejects a naive value rather than guessing, so a
+	meta file from an older build is treated as 'never acked' instead of
+	silently comparing against the wrong clock."""
 	acked_at = _pushed_meta(jti, log_kind).get("acked_at")
-	return frappe.utils.get_datetime(acked_at) if acked_at else None
+	if not acked_at:
+		return None
+	try:
+		return parse_iso(acked_at)
+	except (ValueError, TypeError):
+		return None
 
 
 def _mark_pushed(jti: str, log_kind: str, pushed_bytes: int) -> None:
@@ -57,7 +73,7 @@ def _mark_pushed(jti: str, log_kind: str, pushed_bytes: int) -> None:
 	with locked_file(path + ".lock"):
 		atomic_write_json(
 			path,
-			{"pushed_bytes": pushed_bytes, "acked_at": frappe.utils.now_datetime().isoformat()},
+			{"pushed_bytes": pushed_bytes, "acked_at": utc_iso()},
 		)
 
 
@@ -131,7 +147,11 @@ def _enforce_retention(policy: dict) -> None:
 	if not os.path.isdir(log_dir):
 		return
 
-	now = frappe.utils.now_datetime()
+	# One clock for both comparisons: acked_at is UTC-aware, and st_mtime is an
+	# epoch timestamp read as UTC. Previously these were now_datetime() (naive
+	# *System Settings* tz) vs fromtimestamp() (naive *OS* tz) - routinely hours
+	# apart in a container, which could age a file out early.
+	now = utc_now()
 	for name in os.listdir(log_dir):
 		parsed = _jti_and_kind_from_filename(name)
 		if parsed is None:
@@ -149,7 +169,7 @@ def _enforce_retention(policy: dict) -> None:
 			acked_at = _acked_at(jti, log_kind)
 			grace_elapsed = acked_at is not None and (now - acked_at).days > grace_days
 
-			mtime = datetime.fromtimestamp(stat.st_mtime)
+			mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
 			age_days = (now - mtime).days
 
 			if (fully_acked and grace_elapsed) or age_days > retention_days:

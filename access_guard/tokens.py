@@ -17,7 +17,7 @@ because the policy token has no aud/jti concept. This module does steps 1-4
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pyseto
 from pyseto import Key
@@ -30,6 +30,8 @@ from access_guard.protocol import (
 	TokenMalformedError,
 	TokenSignatureError,
 	check_pv,
+	parse_iso,
+	utc_now,
 )
 
 
@@ -97,13 +99,6 @@ def _check_exp(claims: dict) -> None:
 	except (ValueError, TypeError) as e:
 		raise TokenMalformedError(f"invalid exp claim: {e}")
 
-	now = datetime.now(timezone.utc)
+	now = utc_now()
 	if now > exp_dt + timedelta(seconds=CLOCK_SKEW_LEEWAY_SECONDS):
 		raise TokenExpiredError(f"token expired at {exp}")
-
-
-def parse_iso(value: str) -> datetime:
-	dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-	if dt.tzinfo is None:
-		dt = dt.replace(tzinfo=timezone.utc)
-	return dt

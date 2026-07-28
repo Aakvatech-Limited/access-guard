@@ -55,7 +55,7 @@ Names in `constants.py`; created lazily by `config_utils.private_base_dir()`.
 |------|----------|
 | `grants.json` | one shared file, `{jti: record, ...}` — authoritative grant records (incl. `sid`, `user`, `user_email`) |
 | `used_jti.json` | replay set — atomic check-and-set under lock in `mark_jti_used` |
-| `policy.json` | `{"token", "policy", "verified_at"}` — read via file, never DB |
+| `policy.json` | `{"policy", "verified_at"}` — read via file, never DB; the token itself isn't kept |
 | `logs/<jti>.request.log` | one append-only logfmt log per session, one line per whitelisted call |
 | `logs/<jti>.doc.log` | one append-only logfmt log per session, one line per doc event |
 | `pushed/<jti>.<kind>.meta` | push-ack state for retention (`pushed_bytes`, `acked_at`), one per log kind |

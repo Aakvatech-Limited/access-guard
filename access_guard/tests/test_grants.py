@@ -2,14 +2,13 @@
 used-jti entries whose token exp (+ clock-skew leeway) has passed."""
 
 import os
-from datetime import timedelta, timezone
+from datetime import timedelta
 
-import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from access_guard.config_utils import atomic_write_json, read_json, used_jti_path
 from access_guard.grants import mark_jti_used
-from access_guard.protocol import TokenReplayError
+from access_guard.protocol import TokenReplayError, utc_now
 
 
 def _iso(dt):
@@ -26,7 +25,10 @@ class TestMarkJtiUsedPrunes(FrappeTestCase):
 			os.remove(used_jti_path())
 
 	def _now(self):
-		return frappe.utils.now_datetime().replace(tzinfo=timezone.utc)
+		"""Real UTC, matching what the hub actually puts in an exp claim. Using
+		now_datetime().replace(tzinfo=utc) here - naive system-local mislabelled
+		as UTC - is what let the prune/accept clock mismatch pass unnoticed."""
+		return utc_now()
 
 	def test_expired_entries_dropped_on_next_mark(self):
 		atomic_write_json(
