@@ -22,6 +22,7 @@ one per grant.
 import frappe
 from frappe.sessions import delete_session
 
+from access_guard.constants import IDLE_EXPIRY_FALLBACK_SECONDS
 from access_guard.grants import all_grants, delete_grant
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy
@@ -33,11 +34,17 @@ from access_guard.protocol import (
 
 
 def _effective_expiry_seconds() -> int:
-	"""Policy-only - Frappe's own session middleware already self-expires
-	sessions past the site-wide default on every request, independent of
-	the reaper."""
+	"""Idle window before an ephemeral session is killed. Policy-only - Frappe's
+	own session middleware separately self-expires sessions past the site-wide
+	default on every request.
+
+	0/unset falls back to IDLE_EXPIRY_FALLBACK_SECONDS rather than meaning
+	"never expire": Frappe's `reqd` doesn't reject 0 on an Int field, so an
+	operator can save it (or a mis-seeded install can leave it), and treating
+	that as "off" left ephemeral System Manager sessions alive for Frappe's
+	site-wide default of 10 days - with the User row never deleted at all."""
 	policy = get_policy()
-	return int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
+	return int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0) or IDLE_EXPIRY_FALLBACK_SECONDS
 
 
 def _live_sessions_for_users(users) -> dict[str, list[dict]]:
@@ -77,10 +84,13 @@ def _is_idle_expired(lastupdate, expiry_seconds: int) -> bool:
 
 def reap_idle_sessions() -> None:
 	"""scheduler_event, ~15 min. Kills every ephemeral session idle beyond the
-	effective expiry, then reaps the grants left without a live session."""
+	effective expiry, then reaps the grants left without a live session.
+
+	Note there is no "idle-expiry disabled" early return: reaping a grant whose
+	session is already gone must happen regardless of how the idle window is
+	configured, or a stale grant + its System Manager User row live forever.
+	_effective_expiry_seconds() falls back to a sane window rather than 0."""
 	expiry_seconds = _effective_expiry_seconds()
-	if expiry_seconds <= 0:
-		return  # no idle-expiry configured - not "expire everything immediately"
 
 	def is_idle(row):
 		return _is_idle_expired(row["lastupdate"], expiry_seconds)

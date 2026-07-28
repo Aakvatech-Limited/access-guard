@@ -25,6 +25,14 @@ CLOCK_SKEW_LEEWAY_SECONDS = 60
 # verifies is a replayable token (see grants._is_expired).
 PRUNE_MARGIN_SECONDS = 300
 
+# Idle window used when policy.session_expiry_seconds is 0/unset. Deprovisioning
+# is not an operator-tunable "off" switch: Frappe's `reqd` doesn't reject 0 on an
+# Int field, and treating 0 as "never expire" left ephemeral System Manager
+# sessions alive for Frappe's site-wide 10-day default with the User never
+# deleted. Matches the hub's own default (6h) so behaviour is unchanged for a
+# correctly-configured hub.
+IDLE_EXPIRY_FALLBACK_SECONDS = 6 * 60 * 60
+
 # --- Redis cache ---------------------------------------------------------
 # Disk (POLICY_FILE) is the durable source of truth; redis is purely an
 # accelerator in front of it, invalidated explicitly on every write
