@@ -21,6 +21,7 @@ from access_guard.hub_client import pull_policy, push_logs
 from access_guard.logging_ import _SUFFIX_BY_KIND
 from access_guard.policy import get_policy, verify_and_store_policy
 from access_guard.protocol import (
+	MAX_PUSH_BYTES,
 	POLICY_LOG_SYNC_ENABLED,
 	POLICY_PUSH_GRACE_DAYS,
 	POLICY_RETENTION_DAYS,
@@ -87,6 +88,33 @@ def sync_hourly() -> None:
 	_enforce_retention(policy)
 
 
+def _split_chunks(blob: bytes) -> list[tuple[bytes, int]]:
+	"""`blob` split on line boundaries into (chunk, source_bytes) pairs, every
+	chunk at most MAX_PUSH_BYTES so the hub can never reject one.
+
+	Line-aligned, never a blind slice: the hub appends what it receives verbatim,
+	so cutting mid-line would file two corrupt half-lines. A single line over the
+	cap has no boundary to split on, so it is truncated to fit - `source_bytes` is
+	then larger than the chunk, which is why the caller advances its file offset by
+	that rather than by len(chunk)."""
+	chunks = []
+	current = bytearray()
+	consumed = 0
+	for line in blob.splitlines(keepends=True):
+		if len(current) + len(line) > MAX_PUSH_BYTES:
+			if current:
+				chunks.append((bytes(current), consumed))
+				current, consumed = bytearray(), 0
+			consumed += len(line)
+			line = line[:MAX_PUSH_BYTES]
+		else:
+			consumed += len(line)
+		current += line
+	if current:
+		chunks.append((bytes(current), consumed))
+	return chunks
+
+
 def _push_all_logs() -> None:
 	log_dir = logs_dir()
 	if not os.path.isdir(log_dir):
@@ -99,19 +127,28 @@ def _push_all_logs() -> None:
 		jti, log_kind = parsed
 		path = os.path.join(log_dir, name)
 		offset = _pushed_bytes(jti, log_kind)
+		# Binary: pushed_bytes is a byte offset, and the hub's MAX_PUSH_BYTES is a
+		# byte cap - text mode would let a multi-byte character make len() disagree
+		# with both.
 		try:
-			with open(path) as f:
+			with open(path, "rb") as f:
 				f.seek(offset)
-				new_text = f.read()
-				total_bytes = f.tell()
+				blob = f.read()
 		except OSError:
 			continue
-		if not new_text.strip():
+		if not blob.strip():
 			continue
 
-		result = push_logs(jti=jti, log_kind=log_kind, lines=new_text)
-		if result and result.get("ok"):
-			_mark_pushed(jti, log_kind, total_bytes)
+		# Chunked, because the hub rejects anything over MAX_PUSH_BYTES outright.
+		# Sent in order, advancing the offset per accepted chunk: a failure partway
+		# through keeps what already landed and resumes from there next hour,
+		# instead of re-sending (and duplicating) the whole tail.
+		for chunk, source_bytes in _split_chunks(blob):
+			result = push_logs(jti=jti, log_kind=log_kind, lines=chunk.decode(errors="replace"))
+			if not (result and result.get("ok")):
+				break  # hub unreachable or refused; resume from `offset` next run
+			offset += source_bytes
+			_mark_pushed(jti, log_kind, offset)
 
 
 def _pull_and_verify_policy() -> None:

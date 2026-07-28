@@ -18,6 +18,7 @@ class TestReaper(FrappeTestCase):
 	def setUp(self):
 		self._users_to_clean = []
 		self._jtis_to_clean = []
+		self._sids_to_clean = []
 		self.addCleanup(self._cleanup)
 
 	def _cleanup(self):
@@ -26,6 +27,8 @@ class TestReaper(FrappeTestCase):
 		for user in self._users_to_clean:
 			if frappe.db.exists("User", user):
 				frappe.delete_doc("User", user, force=True, ignore_permissions=True)
+		for sid in self._sids_to_clean:
+			frappe.db.sql("DELETE FROM `tabSessions` WHERE sid=%s", sid)
 		frappe.db.commit()
 
 	def _make_ephemeral_user(self, email):
@@ -41,7 +44,14 @@ class TestReaper(FrappeTestCase):
 		self._users_to_clean.append(email)
 		return user.name
 
+	def _session_exists(self, sid) -> bool:
+		"""Raw count, NOT frappe.db.exists("Sessions", ...) - tabSessions has no
+		`name` column, so exists() selects nothing and always returns None. An
+		assertFalse on it passes vacuously whether the row is there or not."""
+		return bool(frappe.db.sql("SELECT COUNT(*) FROM `tabSessions` WHERE sid=%s", sid)[0][0])
+
 	def _make_session_row(self, user, sid, lastupdate):
+		self._sids_to_clean.append(sid)
 		frappe.db.sql("DELETE FROM `tabSessions` WHERE sid=%s", sid)
 		sessions = frappe.qb.DocType("Sessions")
 		(
@@ -79,7 +89,7 @@ class TestReaper(FrappeTestCase):
 
 		self.assertFalse(frappe.db.exists("User", email), "ephemeral user should be reaped")
 		self.assertIsNone(read_grant(jti), "grant file should be removed after reap")
-		self.assertFalse(frappe.db.exists("Sessions", {"sid": sid}), "session row should be deleted")
+		self.assertFalse(self._session_exists(sid), "session row should be deleted")
 
 	def test_non_ephemeral_user_never_touched(self):
 		"""A real client user (no grant file referencing it) must survive
@@ -103,26 +113,33 @@ class TestReaper(FrappeTestCase):
 			reap_idle_sessions()
 
 		self.assertTrue(frappe.db.exists("User", email), "real client user must never be reaped")
+		self.assertTrue(self._session_exists(sid), "real client session must never be killed")
 
 	def _write_policy(self, policy: dict):
+		"""Stub POLICY_FILE (bypassing signature verification) and bust the cache.
+
+		The original is captured on the FIRST call only and restored once. Calling
+		this twice in one test used to snapshot the first stub as the second's
+		"original", so a restore could write a stub back over the site's real
+		policy file and leak into later tests."""
 		from access_guard.tests.keys import clear_policy_cache
 
 		path = policy_path()
-		original = read_json(path) if os.path.exists(path) else None
-		atomic_write_json(
-			path,
-			{"policy": policy, "verified_at": utc_iso()},
-		)
+		if not hasattr(self, "_policy_restored"):
+			original = read_json(path) if os.path.exists(path) else None
+
+			def _restore():
+				if original is not None:
+					atomic_write_json(path, original)
+				elif os.path.exists(path):
+					os.remove(path)
+				clear_policy_cache()
+
+			self.addCleanup(_restore)
+			self._policy_restored = True
+
+		atomic_write_json(path, {"policy": policy, "verified_at": utc_iso()})
 		clear_policy_cache()
-
-		def _restore():
-			if original is not None:
-				atomic_write_json(path, original)
-			elif os.path.exists(path):
-				os.remove(path)
-			clear_policy_cache()
-
-		self.addCleanup(_restore)
 
 	def _make_live_grant(self, email, jti, sid):
 		user = self._make_ephemeral_user(email)
@@ -153,7 +170,7 @@ class TestReaper(FrappeTestCase):
 
 		self.assertFalse(frappe.db.exists("User", email), "access_disabled must reap live grants")
 		self.assertIsNone(read_grant(jti))
-		self.assertFalse(frappe.db.exists("Sessions", {"sid": sid}))
+		self.assertFalse(self._session_exists(sid))
 
 	def test_blacklisted_email_is_reaped_others_untouched(self):
 		blacklisted_email = "blacklisted-target@example.com"
@@ -173,6 +190,44 @@ class TestReaper(FrappeTestCase):
 		self.assertIsNone(read_grant(b_jti))
 		self.assertTrue(frappe.db.exists("User", safe_email), "non-blacklisted user must be untouched")
 		self.assertIsNotNone(read_grant(s_jti))
+
+	def test_expiry_zero_adds_no_idle_window(self):
+		"""expiry 0 = "add no limit of our own": a long-idle session is left for
+		Frappe's own expiry to kill, not reaped here."""
+		email = "expiry-zero-live@example.com"
+		jti, sid = "expiry-zero-jti-1", "expiry-zero-sid-1"
+		user = self._make_ephemeral_user(email)
+		self._jtis_to_clean.append(jti)
+		old_time = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-100)
+		self._make_session_row(user, sid, old_time)
+		write_grant(jti, {"jti": jti, "pv": 1, "user": user, "sid": sid, "issued_at": utc_iso()})
+		self._write_policy({"pv": 1, "rules": [], "session_expiry_seconds": 0})
+
+		with patch("frappe.enqueue"):
+			reap_idle_sessions()
+
+		self.assertTrue(frappe.db.exists("User", email), "expiry 0 must not idle-kill")
+		self.assertIsNotNone(read_grant(jti))
+		self.assertTrue(self._session_exists(sid))
+
+	def test_expiry_zero_still_deletes_user_once_session_is_gone(self):
+		"""The reap is not gated on the idle window: whoever ended the session
+		(here: Frappe, simulated by no session row at all), the grant is dropped
+		and the ephemeral User deleted."""
+		email = "expiry-zero-dead@example.com"
+		jti = "expiry-zero-jti-2"
+		user = self._make_ephemeral_user(email)
+		self._jtis_to_clean.append(jti)
+		write_grant(
+			jti, {"jti": jti, "pv": 1, "user": user, "sid": "already-gone-sid", "issued_at": utc_iso()}
+		)
+		self._write_policy({"pv": 1, "rules": [], "session_expiry_seconds": 0})
+
+		with patch("frappe.enqueue"):
+			reap_idle_sessions()
+
+		self.assertFalse(frappe.db.exists("User", email), "user must be deleted regardless of expiry 0")
+		self.assertIsNone(read_grant(jti))
 
 	def test_no_disabled_or_blacklist_is_a_noop(self):
 		email = "unaffected@example.com"

@@ -57,6 +57,14 @@ def parse_iso(value: str) -> datetime:
 # `ingest_endpoint` is the ONLY place this token is ever checked.
 TRANSPORT_TOKEN_HEADER = "X-Access-Guard-Transport-Token"
 
+# Per-call byte cap on push_logs' `lines` (PROTOCOL.md §5). Shared, not hub-only:
+# the hub rejects a bigger payload outright, so a guard that doesn't know the
+# number can't split at the right place - it just re-sends the same oversized
+# body every hour, never advances its pushed offset, and loses the file to
+# retention. The guard chunks to this (sync._push_all_logs), the hub enforces it
+# (api.push_logs); one constant so the two can't drift.
+MAX_PUSH_BYTES = 8 * 1024 * 1024
+
 # Guard site_config.json keys (the enrollment contract). Shared because the hub
 # emits them and the guard reads them. The `access_guard_` prefix marks them as
 # living in the GUARD's site_config (the hub's own keys are `access_hub_*`).

@@ -22,7 +22,6 @@ one per grant.
 import frappe
 from frappe.sessions import delete_session
 
-from access_guard.constants import IDLE_EXPIRY_FALLBACK_SECONDS
 from access_guard.grants import all_grants, delete_grant
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy
@@ -34,17 +33,15 @@ from access_guard.protocol import (
 
 
 def _effective_expiry_seconds() -> int:
-	"""Idle window before an ephemeral session is killed. Policy-only - Frappe's
-	own session middleware separately self-expires sessions past the site-wide
-	default on every request.
+	"""Extra idle window this app enforces on top of Frappe's own, or 0 for none.
 
-	0/unset falls back to IDLE_EXPIRY_FALLBACK_SECONDS rather than meaning
-	"never expire": Frappe's `reqd` doesn't reject 0 on an Int field, so an
-	operator can save it (or a mis-seeded install can leave it), and treating
-	that as "off" left ephemeral System Manager sessions alive for Frappe's
-	site-wide default of 10 days - with the User row never deleted at all."""
+	0/unset means "don't add one" — not "never expire". Frappe's session
+	middleware already self-expires any session idle past the site-wide default
+	on every request, so 0 delegates the *when* to Frappe. The reap itself is
+	unaffected either way: reap_idle_sessions still drops grants whose session
+	is gone and deletes the User, whoever killed the session."""
 	policy = get_policy()
-	return int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0) or IDLE_EXPIRY_FALLBACK_SECONDS
+	return int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
 
 
 def _live_sessions_for_users(users) -> dict[str, list[dict]]:
@@ -76,20 +73,27 @@ def _grants_by_user(grants: dict[str, dict]) -> dict[str, list[str]]:
 
 
 def _is_idle_expired(lastupdate, expiry_seconds: int) -> bool:
-	if not lastupdate:
+	"""expiry_seconds 0 => we add no idle window of our own, so nothing is ever
+	*our* idle kill. Guarded here rather than at the caller because `idle_for >
+	0` would otherwise doom every session on the site."""
+	if not expiry_seconds or not lastupdate:
 		return False
+	# lastupdate is a naive system-local DB value, so compare against
+	# now_datetime() (also system-local), never utc_now() - see PROTOCOL.md's
+	# UTC invariant: doctypes are system time, files/transport are UTC.
 	idle_for = frappe.utils.time_diff_in_seconds(frappe.utils.now_datetime(), lastupdate)
 	return idle_for > expiry_seconds
 
 
 def reap_idle_sessions() -> None:
 	"""scheduler_event, ~15 min. Kills every ephemeral session idle beyond the
-	effective expiry, then reaps the grants left without a live session.
+	policy's extra expiry window (if any), then reaps every grant left without a
+	live session — deleting the User once its last grant goes.
 
-	Note there is no "idle-expiry disabled" early return: reaping a grant whose
-	session is already gone must happen regardless of how the idle window is
-	configured, or a stale grant + its System Manager User row live forever.
-	_effective_expiry_seconds() falls back to a sane window rather than 0."""
+	Deliberately no "idle-expiry disabled" early return. With expiry 0 we kill
+	nothing ourselves, but Frappe's own session expiry still does, and the grant
+	+ System Manager User row must be cleaned up either way; returning early
+	would leave both alive forever."""
 	expiry_seconds = _effective_expiry_seconds()
 
 	def is_idle(row):
