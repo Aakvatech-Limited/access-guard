@@ -8,7 +8,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from access_guard.config_utils import atomic_write_json, policy_path
+from access_guard.config_utils import policy_path
 from access_guard.grants import read_grant
 from access_guard.protocol import (
 	ClientNotConfiguredError,
@@ -19,7 +19,7 @@ from access_guard.protocol import (
 	TokenReplayError,
 	TokenSignatureError,
 )
-from access_guard.tests.keys import TEST_POLICY_DEFAULTS, TestKeypair
+from access_guard.tests.keys import TEST_POLICY_DEFAULTS, TestKeypair, clear_policy_cache, stub_policy_file
 
 TRANSPORT_TOKEN = "test-transport-token-12345"
 
@@ -45,14 +45,7 @@ class TestAccept(FrappeTestCase):
 		# cached - stub an already-verified policy file directly (bypassing
 		# signature verification, which needs frappe.conf patched with this
 		# keypair - each test does that itself, scoped narrower than setUp).
-		atomic_write_json(
-			policy_path(),
-			{
-				"token": "n/a",
-				"policy": dict(TEST_POLICY_DEFAULTS),
-				"verified_at": frappe.utils.now_datetime().isoformat(),
-			},
-		)
+		stub_policy_file(dict(TEST_POLICY_DEFAULTS))
 		self.addCleanup(self._remove_policy_file)
 
 		# accept()/reaper flows call log_session_event(), which enqueues a
@@ -80,6 +73,7 @@ class TestAccept(FrappeTestCase):
 	def _remove_policy_file(self):
 		if os.path.exists(policy_path()):
 			os.remove(policy_path())
+		clear_policy_cache()
 
 	def _cleanup_users(self):
 		for user in self._created_users:

@@ -71,11 +71,11 @@ class TestPolicyEnforcement(FrappeTestCase):
 
 	def test_warn_rule_logs_and_allows(self):
 		from access_guard.config_utils import atomic_write_json, policy_path
+		from access_guard.tests.keys import clear_policy_cache
 
 		sid = self._fake_ephemeral_session("warn-jti-1")
 
 		warn_policy = {
-			"token": "n/a",
 			"policy": {
 				"pv": 1,
 				"rules": [{"doctype": "ToDo", "actions": ["create"], "mode": "warn"}],
@@ -91,6 +91,7 @@ class TestPolicyEnforcement(FrappeTestCase):
 
 			original = read_json(path)
 		atomic_write_json(path, warn_policy)
+		clear_policy_cache()
 		try:
 			with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="ephemeral@example.com")):
 				todo = frappe.new_doc("ToDo")
@@ -107,6 +108,7 @@ class TestPolicyEnforcement(FrappeTestCase):
 				atomic_write_json(path, original)
 			elif os.path.exists(path):
 				os.remove(path)
+			clear_policy_cache()
 
 
 def _log_path_for(jti):

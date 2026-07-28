@@ -6,10 +6,13 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import frappe
 import pyseto
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pyseto.versions.v4 import V4Public
 
+from access_guard.config_utils import atomic_write_json, policy_path
+from access_guard.constants import POLICY_CACHE_KEY
 from access_guard.protocol import (
 	MODE_DENY,
 	POLICY_ACCESS_DISABLED,
@@ -44,6 +47,27 @@ TEST_POLICY_DEFAULTS = {
 	POLICY_ACCESS_DISABLED: False,
 	POLICY_BLACKLISTED_EMAILS: [],
 }
+
+
+def stub_policy_file(policy: dict, verified_at: str | None = None) -> None:
+	"""Write POLICY_FILE directly (bypassing signature verification, for
+	tests that don't have a matching keypair patched into frappe.conf yet)
+	and clear the redis policy cache so get_policy() actually picks up this
+	fresh file instead of a stale cached value left by an earlier test or
+	an earlier call in this same test - get_policy() only reads from disk
+	when the cache misses (see access_guard.policy.get_policy)."""
+	atomic_write_json(
+		policy_path(),
+		{
+			"policy": policy,
+			"verified_at": verified_at or frappe.utils.now_datetime().isoformat(),
+		},
+	)
+	frappe.cache.delete_value(POLICY_CACHE_KEY)
+
+
+def clear_policy_cache() -> None:
+	frappe.cache.delete_value(POLICY_CACHE_KEY)
 
 
 class TestKeypair:

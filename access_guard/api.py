@@ -7,10 +7,10 @@ receive_policy  allow_guest=True   best-effort policy push from the hub
 import frappe
 
 from access_guard.config_utils import get_guard_conf
-from access_guard.errors import guest_api
+from access_guard.errors import ingest_api
 from access_guard.grants import mark_jti_used, update_grant, write_grant
 from access_guard.logging_ import log_session_event
-from access_guard.policy import get_policy, verify_and_store_policy
+from access_guard.policy import get_policy, store_verified_policy
 from access_guard.protocol import (
 	CLAIM_JTI,
 	CLAIM_USER_EMAIL,
@@ -24,29 +24,24 @@ from access_guard.protocol import (
 	TokenMalformedError,
 	transport_token_hash,
 )
-from access_guard.tokens import verify_hub_token
 
 
-@guest_api
-def accept(token: str | None = None):
-	"""Grant acceptance endpoint. Verifies in the exact PROTOCOL.md §3
-	order (malformed -> signature -> pv -> exp -> aud -> jti-replay), then
-	provisions the ephemeral user + session and redirects into desk.
+@ingest_api
+def accept(claims: dict):
+	"""Grant acceptance endpoint. ingest_api has already done PROTOCOL.md §3
+	steps 1-4 (parse, signature, pv, exp); this does the remaining
+	grant-specific steps 5-6 (aud, jti-replay), then provisions the
+	ephemeral user + session and redirects into desk.
 
 	Any AccessProtocolError raised here is turned into the standard error
-	response by the @guest_api decorator — just raise and return.
+	response by the @ingest_api decorator — just raise and return.
 	"""
-	conf = get_guard_conf()  # ClientNotConfiguredError if incomplete
-
-	# steps 1-4: parse, signature, pv, exp
-	claims = verify_hub_token(token)
-
-	# step 5: aud == transport_token_hash(local token)
-	expected_aud = transport_token_hash(conf["access_guard_transport_token"])
+	# aud == transport_token_hash(local token)
+	expected_aud = transport_token_hash(frappe.conf["access_guard_transport_token"])
 	if claims.get("aud") != expected_aud:
 		raise TokenAudienceError("grant token audience does not match this client")
 
-	# step 6: jti replay (file-backed; check-and-set is atomic)
+	# jti replay (file-backed; check-and-set is atomic)
 	jti = claims.get(CLAIM_JTI)
 	if not jti:
 		raise TokenMalformedError("missing jti claim")
@@ -183,14 +178,15 @@ def _start_session(user: str) -> None:
 	frappe.db.commit()
 
 
-@guest_api
-def receive_policy(policy_token: str | None = None):
+@ingest_api
+def receive_policy(claims: dict):
 	"""Best-effort policy push from the hub. Authenticated entirely by the
-	policy token's own signature (PROTOCOL.md §4) — no transport token
-	needed, since anyone who could forge this token could forge anything.
+	policy token's own signature (PROTOCOL.md §4, already verified by
+	ingest_api) — no transport token needed, since anyone who could forge
+	this token could forge anything.
 	"""
 	from access_guard.reaper import reap_disabled_and_blacklisted
 
-	verify_and_store_policy(policy_token)
+	store_verified_policy(claims)
 	reap_disabled_and_blacklisted()
 	return {"ok": True}

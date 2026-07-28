@@ -9,19 +9,19 @@ from frappe.tests.utils import FrappeTestCase
 
 from access_guard.config_utils import logs_dir, policy_path
 from access_guard.sync import _push_all_logs, _pushed_meta_path, sync_hourly
-from access_guard.tests.keys import TestKeypair
+from access_guard.tests.keys import TestKeypair, clear_policy_cache
 
 
 class TestSyncHourly(FrappeTestCase):
 	def setUp(self):
 		self.keypair = TestKeypair()
-		if os.path.exists(policy_path()):
-			os.remove(policy_path())
+		self._remove_policy_file()
 		self.addCleanup(self._remove_policy_file)
 
 	def _remove_policy_file(self):
 		if os.path.exists(policy_path()):
 			os.remove(policy_path())
+		clear_policy_cache()
 
 	def test_policy_pull_and_reap_run_even_when_log_sync_disabled(self):
 		token = self.keypair.mint_policy_token(

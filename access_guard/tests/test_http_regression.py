@@ -78,23 +78,19 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		# rather than silently falling back to defaults if nothing is
 		# cached - stub an already-verified policy file directly (no real
 		# hub to pull from over this fake URL).
-		from access_guard.config_utils import atomic_write_json, policy_path
-		from access_guard.tests.keys import TEST_POLICY_DEFAULTS
+		from access_guard.config_utils import policy_path
+		from access_guard.tests.keys import TEST_POLICY_DEFAULTS, stub_policy_file
 
 		self._policy_path = policy_path()
-		atomic_write_json(
-			self._policy_path,
-			{
-				"token": "n/a",
-				"policy": dict(TEST_POLICY_DEFAULTS),
-				"verified_at": frappe.utils.now_datetime().isoformat(),
-			},
-		)
+		stub_policy_file(dict(TEST_POLICY_DEFAULTS))
 		self.addCleanup(self._remove_policy_file)
 
 	def _remove_policy_file(self):
+		from access_guard.tests.keys import clear_policy_cache
+
 		if os.path.exists(self._policy_path):
 			os.remove(self._policy_path)
+		clear_policy_cache()
 
 	@staticmethod
 	def _restore_site_config(config_path, original_config):
@@ -180,7 +176,7 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		# policy override.
 		exp = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
 		policy_token = self.keypair.mint_policy_token(policy={"exp": exp})
-		body = json.dumps({"policy_token": policy_token}).encode()
+		body = json.dumps({"token": policy_token}).encode()
 		resp = self._post("access_guard.api.receive_policy", body)
 
 		self.assertEqual(resp.status_code, 200)
@@ -199,6 +195,8 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 
 	@staticmethod
 	def _restore_policy_file(snapshot):
+		from access_guard.tests.keys import clear_policy_cache
+
 		path, original = snapshot
 		if original is None:
 			if os.path.exists(path):
@@ -206,11 +204,16 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		else:
 			with open(path, "w") as f:
 				f.write(original)
+		# receive_policy() (called for real over HTTP above) refreshed the
+		# redis cache with the NEW policy - clear it so a later test reading
+		# get_policy() sees this restored (old) on-disk content, not the
+		# stale cached one.
+		clear_policy_cache()
 
 	def test_receive_policy_bad_signature_over_http_returns_error_shape_not_crash(self):
 		policy_token = self.keypair.mint_policy_token()
 		tampered = self.keypair.tamper(policy_token)
-		body = json.dumps({"policy_token": tampered}).encode()
+		body = json.dumps({"token": tampered}).encode()
 		resp = self._post("access_guard.api.receive_policy", body)
 
 		self.assertEqual(resp.status_code, 401)

@@ -105,18 +105,22 @@ class TestReaper(FrappeTestCase):
 		self.assertTrue(frappe.db.exists("User", email), "real client user must never be reaped")
 
 	def _write_policy(self, policy: dict):
+		from access_guard.tests.keys import clear_policy_cache
+
 		path = policy_path()
 		original = read_json(path) if os.path.exists(path) else None
 		atomic_write_json(
 			path,
-			{"token": "n/a", "policy": policy, "verified_at": frappe.utils.now_datetime().isoformat()},
+			{"policy": policy, "verified_at": frappe.utils.now_datetime().isoformat()},
 		)
+		clear_policy_cache()
 
 		def _restore():
 			if original is not None:
 				atomic_write_json(path, original)
 			elif os.path.exists(path):
 				os.remove(path)
+			clear_policy_cache()
 
 		self.addCleanup(_restore)
 
