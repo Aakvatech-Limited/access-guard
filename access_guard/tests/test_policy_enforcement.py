@@ -54,6 +54,29 @@ class TestPolicyEnforcement(FrappeTestCase):
 				new_user.insert(ignore_permissions=True)
 		self.assertFalse(frappe.db.exists("User", "blocked-by-policy@example.com"))
 
+	def test_before_validate_dispatches_submit_not_write(self):
+		"""A submitted doc must be enforced as "submit", not "write" too -
+		before_validate fires for both create/write and submit (docstatus is
+		already Submitted by the time Frappe calls it), so it must branch on
+		docstatus rather than blindly treating every before_validate as write."""
+		from frappe.model.docstatus import DocStatus
+
+		from access_guard.session_guard import before_validate
+
+		sid = self._fake_ephemeral_session("submit-dispatch-jti")
+		doc = frappe.new_doc("ToDo")
+		doc.description = "submit-dispatch test"
+		doc.docstatus = DocStatus.submitted()
+
+		with (
+			patch.object(frappe.local, "session", frappe._dict(sid=sid, user="ephemeral@example.com")),
+			patch("access_guard.session_guard.enforce") as mock_enforce,
+		):
+			before_validate(doc)
+
+		mock_enforce.assert_called_once()
+		self.assertEqual(mock_enforce.call_args.args[1], "submit")
+
 	def test_deny_does_not_apply_to_non_ephemeral_session(self):
 		# No grant file for the current (real) session -> policy must not
 		# apply; ordinary creation should proceed normally.

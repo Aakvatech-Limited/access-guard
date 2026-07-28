@@ -12,7 +12,7 @@ and the corresponding Redis-backed session cache in one call.
 """
 
 import frappe
-from frappe.sessions import delete_session, get_expiry_in_seconds
+from frappe.sessions import delete_session
 
 from access_guard.grants import all_grants, delete_grant
 from access_guard.logging_ import log_session_event
@@ -25,12 +25,11 @@ from access_guard.protocol import (
 
 
 def _effective_expiry_seconds() -> int:
+	"""Policy-only - Frappe's own session middleware already self-expires
+	sessions past the site-wide default on every request, independent of
+	the reaper."""
 	policy = get_policy()
-	policy_expiry = int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
-	site_expiry = get_expiry_in_seconds()
-	if policy_expiry <= 0:
-		return site_expiry
-	return min(policy_expiry, site_expiry)
+	return int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
 
 
 def _live_sessions_for_user(user: str) -> list[dict]:
@@ -56,6 +55,8 @@ def reap_idle_sessions() -> None:
 	effective expiry, kill it; once a grant's user has zero live sessions,
 	delete the user and report "reaped"."""
 	expiry_seconds = _effective_expiry_seconds()
+	if expiry_seconds <= 0:
+		return  # no idle-expiry configured - not "expire everything immediately"
 	grants = all_grants()
 
 	for jti, record in grants.items():

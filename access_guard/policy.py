@@ -15,13 +15,7 @@ from access_guard.config_utils import (
 )
 from access_guard.constants import POLICY_CACHE_KEY, POLICY_CACHE_TTL_SECONDS
 from access_guard.hub_client import pull_policy
-from access_guard.protocol import (
-	MODE_DENY,
-	MODE_WARN,
-	POLICY_RULES,
-	PolicyDeniedError,
-	PolicyUnavailableError,
-)
+from access_guard.protocol import POLICY_RULES, PolicyUnavailableError
 from access_guard.tokens import verify_hub_token
 
 
@@ -31,7 +25,10 @@ def store_verified_policy(claims: dict) -> dict:
 	policy so the next get_policy() call doesn't need to hit disk. The raw
 	token itself isn't kept - callers only ever have `claims` at this point
 	(verification, wherever it happened, already consumed the token), and
-	nothing ever re-verifies or forwards it later."""
+	nothing ever re-verifies or forwards it later.
+
+	Cache refresh stays inside the file lock so two concurrent writers can't
+	reorder disk vs. redis - whoever releases the lock last wrote both last."""
 	# Keep pv; drop only the registered housekeeping claims layered on by pyseto/mint side.
 	policy = {k: v for k, v in claims.items() if k not in ("iat", "exp", "nbf")}
 
@@ -42,7 +39,7 @@ def store_verified_policy(claims: dict) -> dict:
 	path = policy_path()
 	with locked_file(path + ".lock"):
 		atomic_write_json(path, record)
-	frappe.cache.set_value(POLICY_CACHE_KEY, policy, expires_in_sec=POLICY_CACHE_TTL_SECONDS)
+		frappe.cache.set_value(POLICY_CACHE_KEY, policy, expires_in_sec=POLICY_CACHE_TTL_SECONDS)
 	return record
 
 
@@ -64,16 +61,26 @@ def get_policy() -> dict:
 	only; a guard must always enforce a real policy). If nothing has ever
 	been received (e.g. brand-new install, before the first accept()/hourly
 	sync), pull and verify one synchronously. Raises PolicyUnavailableError
-	if that also fails - there is no silent fallback."""
-	cached = frappe.cache.get_value(POLICY_CACHE_KEY)
+	if that also fails - there is no silent fallback.
+
+	expires=True: get_value's default would cache a miss into
+	frappe.local.cache, but set_value (called with expires_in_sec, as
+	store_verified_policy always does) skips that cache on writes - so a
+	miss here followed by a write there would leave frappe.local.cache stuck
+	on a stale None. expires=True avoids frappe.local.cache entirely."""
+	cached = frappe.cache.get_value(POLICY_CACHE_KEY, expires=True)
 	if cached is not None:
 		return cached
 
-	record = read_json(policy_path(), default=None)
-	if record and isinstance(record.get("policy"), dict):
-		policy = record["policy"]
-		frappe.cache.set_value(POLICY_CACHE_KEY, policy, expires_in_sec=POLICY_CACHE_TTL_SECONDS)
-		return policy
+	# Same lock store_verified_policy uses, so a concurrent writer can't land
+	# between this read and this set_value and get clobbered by a stale one.
+	path = policy_path()
+	with locked_file(path + ".lock"):
+		record = read_json(path, default=None)
+		if record and isinstance(record.get("policy"), dict):
+			policy = record["policy"]
+			frappe.cache.set_value(POLICY_CACHE_KEY, policy, expires_in_sec=POLICY_CACHE_TTL_SECONDS)
+			return policy
 
 	token = pull_policy()
 	if not token:
@@ -96,17 +103,9 @@ def match_rule(doctype: str, action: str) -> dict | None:
 	return None
 
 
-def enforce(doctype: str, action: str, *, jti: str | None = None, sid: str | None = None) -> str | None:
-	"""Returns None (allowed silently), MODE_WARN (allowed, caller should
-	log+notice), or raises PolicyDeniedError (MODE_DENY)."""
+def enforce(doctype: str, action: str) -> str | None:
+	"""Returns the matching rule's mode (MODE_DENY, MODE_WARN) or None (no
+	rule -> allow). The caller decides what to do with MODE_DENY - this
+	just answers the policy question, it doesn't raise."""
 	rule = match_rule(doctype, action)
-	if rule is None:
-		return None
-	mode = rule.get("mode")
-	if mode == MODE_DENY:
-		raise PolicyDeniedError(
-			f"Operation '{action}' on '{doctype}' is denied by policy for monitored sessions."
-		)
-	if mode == MODE_WARN:
-		return MODE_WARN
-	return None
+	return rule.get("mode") if rule else None

@@ -28,16 +28,26 @@ CLOCK_SKEW_LEEWAY_SECONDS = 60
 POLICY_CACHE_KEY = "access_guard_policy"
 POLICY_CACHE_TTL_SECONDS = 24 * 60 * 60
 
+# Same accelerator-in-front-of-disk shape as policy, for GRANTS_FILE. One key,
+# holding {"grants": {jti: record, ...}, "sid_map": {sid: jti, ...}} - a single
+# object, not two independently-written keys, so the two halves can never
+# disagree on a cache hit (they always come from the same set_value call,
+# itself made inside the same file lock as the disk write - see grants.py).
+# The TTL is purely a backstop against e.g. a redis flush, not a normal expiry
+# path.
+GRANTS_CACHE_KEY = "access_guard_grants"
+GRANTS_CACHE_TTL_SECONDS = 24 * 60 * 60
+
 # --- Logging ------------------------------------------------------------------
 # Two log kinds, each its own file (no per-line "type" needed - the filename
-# says it). Session lifecycle (accepted/login/logout) has no local file at
+# says it). Session lifecycle (login/logout) has no local file at
 # all: it's pushed straight to the hub, see logging_.log_session_event.
 LOG_KIND_REQUEST = "request"  # <jti>.log      — one line per whitelisted call
 LOG_KIND_DOC = "doc"  # <jti>.doc.log  — one line per committed change to an always-log doctype
 
 # --- On-disk layout, under site/private/<PRIVATE_DIR>/ -----------------------
 PRIVATE_DIR = "access_guard"
-GRANTS_SUBDIR = "grants"  # <jti>.json  — authoritative grant records
+GRANTS_FILE = "grants.json"  # one shared file, {jti: record, ...} — authoritative grant records
 USED_JTI_FILE = "used_jti.json"  # replay set
 POLICY_FILE = "policy.json"  # {"policy": {...}, "verified_at": iso}
 LOGS_SUBDIR = "logs"  # <jti>.log, <jti>.doc.log

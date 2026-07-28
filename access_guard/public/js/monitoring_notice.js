@@ -8,13 +8,9 @@ frappe.ready(() => {
 		return;
 	}
 	const hash = boot.access_guard_login_hash;
-	if (hash && localStorage.getItem(STORAGE_KEY) === hash) {
+	if (localStorage.getItem(STORAGE_KEY) === hash) {
 		return;
 	}
-
 	frappe.msgprint({ message: frappe.utils.escape_html(NOTICE_TEXT), title: __("Notice") });
-
-	if (hash) {
-		localStorage.setItem(STORAGE_KEY, hash);
-	}
+	localStorage.setItem(STORAGE_KEY, hash);
 });

@@ -36,7 +36,7 @@ def _post(method: str, payload: dict, timeout: int = 15) -> dict | None:
 
 
 def push_logs(jti: str, log_kind: str, lines: str) -> dict | None:
-	return _post("access_hub.api.push_logs", {"jti": jti, "log_kind": log_kind, "lines": lines})
+	return _post("access_hub.api.push_logs", {"jti": jti, "log_kind": log_kind, "lines": lines}, timeout=30)
 
 
 def report_session_event(jti: str, event: str, reason: str | None = None) -> dict | None:

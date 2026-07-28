@@ -22,7 +22,7 @@ import tempfile
 import frappe
 
 from access_guard.constants import (
-	GRANTS_SUBDIR,
+	GRANTS_FILE,
 	LOGS_SUBDIR,
 	POLICY_FILE,
 	PRIVATE_DIR,
@@ -58,13 +58,13 @@ def private_base_dir() -> str:
 	standard subdirectories) lazily if it doesn't exist yet."""
 	base = frappe.get_site_path("private", PRIVATE_DIR)
 	os.makedirs(base, mode=0o700, exist_ok=True)
-	for sub in (GRANTS_SUBDIR, LOGS_SUBDIR, PUSHED_SUBDIR):
+	for sub in (LOGS_SUBDIR, PUSHED_SUBDIR):
 		os.makedirs(os.path.join(base, sub), mode=0o700, exist_ok=True)
 	return base
 
 
-def grants_dir() -> str:
-	return os.path.join(private_base_dir(), GRANTS_SUBDIR)
+def grants_path() -> str:
+	return os.path.join(private_base_dir(), GRANTS_FILE)
 
 
 def logs_dir() -> str:

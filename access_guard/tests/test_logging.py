@@ -10,6 +10,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from access_guard.config_utils import atomic_write_json, policy_path, read_json
 from access_guard.grants import delete_grant, write_grant
 from access_guard.logging_ import log_file_path
 
@@ -127,15 +128,36 @@ class TestLogging(FrappeTestCase):
 		self.assertEqual(lines[0]["status"], "error")
 		self.assertEqual(lines[0]["code"], "417")
 
+	def _stub_always_log_only_policy(self):
+		"""User in always_log_doctypes, no deny/warn rule for it - isolates
+		the always-log path from enforcement, regardless of whatever policy
+		another test left cached. Restores whatever was there before, so
+		this doesn't leak into later test modules."""
+		from access_guard.tests.keys import clear_policy_cache, stub_policy_file
+
+		path = policy_path()
+		original = read_json(path) if os.path.exists(path) else None
+		stub_policy_file({"pv": 1, "rules": [], "always_log_doctypes": ["User"]})
+
+		def _restore():
+			if original is not None:
+				atomic_write_json(path, original)
+			elif os.path.exists(path):
+				os.remove(path)
+			clear_policy_cache()
+
+		self.addCleanup(_restore)
+
 	def test_rolled_back_write_produces_no_doc_line(self):
-		from access_guard.always_log import on_update
+		from access_guard.session_guard import _enforce_for_doc
 
 		jti = "log-jti-rollback"
 		sid = self._fake_session(jti)
+		self._stub_always_log_only_policy()
 
 		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
 			doc = frappe.get_doc("User", "Administrator")
-			on_update(doc)  # registers an after_commit callback
+			_enforce_for_doc(doc, "write")  # registers an after_commit callback
 		# Simulate the write never committing: run after_rollback instead.
 		frappe.db.after_commit.reset()
 
@@ -143,17 +165,50 @@ class TestLogging(FrappeTestCase):
 		self.assertEqual(lines, [])
 
 	def test_committed_write_produces_doc_line(self):
-		from access_guard.always_log import on_update
+		from access_guard.session_guard import _enforce_for_doc
 
 		jti = "log-jti-committed"
 		sid = self._fake_session(jti)
+		self._stub_always_log_only_policy()
 
 		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
 			doc = frappe.get_doc("User", "Administrator")
-			on_update(doc)
+			_enforce_for_doc(doc, "write")
 		frappe.db.after_commit.run()
 
 		lines = self._read_lines(jti, kind="doc")
 		self.assertEqual(len(lines), 1)
 		self.assertEqual(lines[0]["event"], "write")
+		self.assertEqual(lines[0]["doctype"], "User")
+
+	def test_denied_write_is_logged_immediately(self):
+		"""A denied operation never commits, so it can't ride after_commit -
+		it must log synchronously, at the point of denial."""
+		from access_guard.protocol import PolicyDeniedError
+		from access_guard.session_guard import _enforce_for_doc
+		from access_guard.tests.keys import clear_policy_cache, stub_policy_file
+
+		jti = "log-jti-denied"
+		sid = self._fake_session(jti)
+		path = policy_path()
+		original = read_json(path) if os.path.exists(path) else None
+		stub_policy_file({"pv": 1, "rules": [{"doctype": "User", "actions": ["write"], "mode": "deny"}]})
+
+		def _restore():
+			if original is not None:
+				atomic_write_json(path, original)
+			elif os.path.exists(path):
+				os.remove(path)
+			clear_policy_cache()
+
+		self.addCleanup(_restore)
+
+		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
+			doc = frappe.get_doc("User", "Administrator")
+			with self.assertRaises(PolicyDeniedError):
+				_enforce_for_doc(doc, "write")
+
+		lines = self._read_lines(jti, kind="doc")
+		self.assertEqual(len(lines), 1)
+		self.assertEqual(lines[0]["event"], "denied:write")
 		self.assertEqual(lines[0]["doctype"], "User")

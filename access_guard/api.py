@@ -8,7 +8,7 @@ import frappe
 
 from access_guard.config_utils import get_guard_conf
 from access_guard.errors import ingest_api
-from access_guard.grants import mark_jti_used, update_grant, write_grant
+from access_guard.grants import mark_jti_used, write_grant
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy, store_verified_policy
 from access_guard.protocol import (
@@ -70,8 +70,10 @@ def accept(claims: dict):
 	user = _create_or_reuse_ephemeral_user(
 		user_email, first_name, middle_name, last_name, policy.get(POLICY_NAME_SUFFIX)
 	)
-
-	effective_expiry_seconds = int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
+	# Written after login, sid already known - see session_guard.py for the
+	# narrow gap this leaves during post_login() itself.
+	_start_session(user)
+	sid = frappe.session.sid
 
 	issued_at = frappe.utils.now_datetime().isoformat()
 	write_grant(
@@ -82,16 +84,11 @@ def accept(claims: dict):
 			"user_name": " ".join(p for p in (first_name, middle_name, last_name) if p),
 			"user_email": user_email,
 			"user": user,
-			"sid": None,
+			"sid": sid,
 			"issued_at": issued_at,
-			"effective_expiry_seconds": effective_expiry_seconds,
+			"effective_expiry_seconds": int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0),
 		},
 	)
-	log_session_event(jti, "accepted")
-
-	_start_session(user)
-	sid = frappe.session.sid
-	update_grant(jti, sid=sid)
 	log_session_event(jti, "login")
 
 	# Land where Frappe's own post-login would for a system user: the
@@ -101,7 +98,6 @@ def accept(claims: dict):
 
 	frappe.local.response["type"] = "redirect"
 	frappe.local.response["location"] = get_default_path() or "/app"
-	return
 
 
 def _create_or_reuse_ephemeral_user(
@@ -140,7 +136,7 @@ def _create_or_reuse_ephemeral_user(
 
 	last_name = last_name or ""
 	suffix = f"({name_suffix})" if name_suffix else ""
-	suffixed_last_name = f"{last_name} {suffix}".strip()
+	suffixed_last_name = f"{last_name} {suffix}".strip() if last_name else suffix
 
 	user_doc = frappe.new_doc("User")
 	user_doc.email = user_email

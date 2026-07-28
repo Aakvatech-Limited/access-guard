@@ -45,7 +45,7 @@ CLAIM_PV = "pv"
 # Policy document — hub-signed PASETO v4.public token; claims are the keys
 # below + iat + pv.
 POLICY_RULES = "rules"  # [{doctype, actions:[...], mode:"deny"|"warn"}]
-POLICY_SESSION_EXPIRY_SECONDS = "session_expiry_seconds"  # default 6h; effective = min(this, site)
+POLICY_SESSION_EXPIRY_SECONDS = "session_expiry_seconds"  # default 6h; idle-expiry for ephemeral sessions only (Frappe's own site-wide session_expiry is enforced separately)
 POLICY_ALWAYS_LOG_DOCTYPES = "always_log_doctypes"
 POLICY_MAX_KEY_SIZE_BYTES = "max_key_size_bytes"
 POLICY_LOG_READS = "log_reads"

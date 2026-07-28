@@ -19,22 +19,18 @@ on_logout = "access_guard.reaper.teardown_on_logout"
 
 doc_events = {
 	"*": {
-		"validate": [
-			"access_guard.session_guard.validate",
+		"before_validate": [
+			"access_guard.session_guard.before_validate",
 		],
-		"before_submit": "access_guard.session_guard.before_submit",
 		"before_cancel": "access_guard.session_guard.before_cancel",
 		"on_trash": [
 			"access_guard.session_guard.on_trash",
-			"access_guard.always_log.on_trash",
 		],
-		"on_update": "access_guard.always_log.on_update",
 	}
 }
 
 scheduler_events = {
 	"cron": {
-		# ~15 min reaper, per BUILD_PLAN.md task 4.
 		"*/15 * * * *": [
 			"access_guard.reaper.reap_idle_sessions",
 		],
