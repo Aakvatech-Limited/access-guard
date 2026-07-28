@@ -11,7 +11,6 @@ from frappe.tests.utils import FrappeTestCase
 from access_guard.config_utils import atomic_write_json, policy_path
 from access_guard.grants import read_grant
 from access_guard.protocol import (
-	POLICY_DEFAULTS,
 	ClientNotConfiguredError,
 	EphemeralUserCollisionError,
 	ProtocolVersionError,
@@ -20,7 +19,7 @@ from access_guard.protocol import (
 	TokenReplayError,
 	TokenSignatureError,
 )
-from access_guard.tests.keys import TestKeypair
+from access_guard.tests.keys import TEST_POLICY_DEFAULTS, TestKeypair
 
 TRANSPORT_TOKEN = "test-transport-token-12345"
 
@@ -50,7 +49,7 @@ class TestAccept(FrappeTestCase):
 			policy_path(),
 			{
 				"token": "n/a",
-				"policy": dict(POLICY_DEFAULTS),
+				"policy": dict(TEST_POLICY_DEFAULTS),
 				"verified_at": frappe.utils.now_datetime().isoformat(),
 			},
 		)

@@ -79,14 +79,14 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		# cached - stub an already-verified policy file directly (no real
 		# hub to pull from over this fake URL).
 		from access_guard.config_utils import atomic_write_json, policy_path
-		from access_guard.protocol import POLICY_DEFAULTS
+		from access_guard.tests.keys import TEST_POLICY_DEFAULTS
 
 		self._policy_path = policy_path()
 		atomic_write_json(
 			self._policy_path,
 			{
 				"token": "n/a",
-				"policy": dict(POLICY_DEFAULTS),
+				"policy": dict(TEST_POLICY_DEFAULTS),
 				"verified_at": frappe.utils.now_datetime().isoformat(),
 			},
 		)

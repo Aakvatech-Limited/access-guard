@@ -10,7 +10,40 @@ import pyseto
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pyseto.versions.v4 import V4Public
 
-from access_guard.protocol import POLICY_DEFAULTS, PV, transport_token_hash
+from access_guard.protocol import (
+	MODE_DENY,
+	POLICY_ACCESS_DISABLED,
+	POLICY_ALWAYS_LOG_DOCTYPES,
+	POLICY_BLACKLISTED_EMAILS,
+	POLICY_LOG_READS,
+	POLICY_LOG_SYNC_ENABLED,
+	POLICY_MAX_KEY_SIZE_BYTES,
+	POLICY_NAME_SUFFIX,
+	POLICY_PUSH_GRACE_DAYS,
+	POLICY_RETENTION_DAYS,
+	POLICY_RULES,
+	POLICY_SESSION_EXPIRY_SECONDS,
+	PV,
+	transport_token_hash,
+)
+
+# Test-only fixture: a full, realistic policy shape for minting test policy
+# tokens. Not a runtime default - the guard never falls back to one (see
+# PolicyUnavailableError), and the hub's own install-time seed lives in
+# access_hub_settings.DEFAULT_RULES/DEFAULT_ALWAYS_LOG_DOCTYPES.
+TEST_POLICY_DEFAULTS = {
+	POLICY_RULES: [{"doctype": "User", "actions": ["create", "write", "delete"], "mode": MODE_DENY}],
+	POLICY_SESSION_EXPIRY_SECONDS: 6 * 60 * 60,
+	POLICY_ALWAYS_LOG_DOCTYPES: ["User", "Server Script", "Scheduled Job Type"],
+	POLICY_MAX_KEY_SIZE_BYTES: 512 * 1024,
+	POLICY_LOG_READS: False,
+	POLICY_LOG_SYNC_ENABLED: True,
+	POLICY_RETENTION_DAYS: 365,
+	POLICY_PUSH_GRACE_DAYS: 7,
+	POLICY_NAME_SUFFIX: "consultant",
+	POLICY_ACCESS_DISABLED: False,
+	POLICY_BLACKLISTED_EMAILS: [],
+}
 
 
 class TestKeypair:
@@ -63,7 +96,7 @@ class TestKeypair:
 		ttl_seconds: int = 30 * 24 * 60 * 60,
 	) -> str:
 		now = datetime.now(timezone.utc) + timedelta(seconds=issued_delta_seconds)
-		claims = dict(POLICY_DEFAULTS)
+		claims = dict(TEST_POLICY_DEFAULTS)
 		if policy:
 			claims.update(policy)
 		claims["iat"] = now.isoformat()

@@ -59,20 +59,6 @@ POLICY_BLACKLISTED_EMAILS = "blacklisted_emails"  # user_email values to reap + 
 MODE_DENY = "deny"
 MODE_WARN = "warn"
 
-POLICY_DEFAULTS = {
-	POLICY_RULES: [{"doctype": "User", "actions": ["create", "write", "delete"], "mode": MODE_DENY}],
-	POLICY_SESSION_EXPIRY_SECONDS: 6 * 60 * 60,
-	POLICY_ALWAYS_LOG_DOCTYPES: ["User", "Server Script", "Scheduled Job Type"],
-	POLICY_MAX_KEY_SIZE_BYTES: 512 * 1024,
-	POLICY_LOG_READS: False,
-	POLICY_LOG_SYNC_ENABLED: True,
-	POLICY_RETENTION_DAYS: 365,
-	POLICY_PUSH_GRACE_DAYS: 7,
-	POLICY_NAME_SUFFIX: "consultant",
-	POLICY_ACCESS_DISABLED: False,
-	POLICY_BLACKLISTED_EMAILS: [],
-}
-
 
 def transport_token_hash(token: str) -> str:
 	"""SHA-256 hex of the transport token. Serves as grant `aud`, the hub's
@@ -140,8 +126,7 @@ class PolicyDeniedError(AccessProtocolError):
 
 class PolicyUnavailableError(AccessProtocolError):
 	# No policy has ever been received AND a synchronous pull also failed -
-	# the guard must never fall back to POLICY_DEFAULTS (those are the hub's
-	# install-seed values only, never a guard-side fallback).
+	# the guard must never fall back to any default policy; there is none.
 	code = "policy_unavailable"
 	http_status = 503
 

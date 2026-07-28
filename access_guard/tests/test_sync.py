@@ -60,8 +60,10 @@ class TestSyncHourly(FrappeTestCase):
 		mock_retention.assert_called_once()
 
 	def test_no_policy_available_still_runs_log_sync_by_default(self):
-		"""No policy ever pulled -> get_policy() falls back to POLICY_DEFAULTS,
-		where log_sync_enabled defaults True."""
+		"""No policy ever pulled and none cached -> get_policy() would raise
+		PolicyUnavailableError, but this test's guard.localhost site_config
+		points at a real hub.localhost, so pull_policy() actually succeeds
+		against it - not a fully isolated unit test."""
 		with (
 			patch("access_guard.sync.pull_policy", return_value=None),
 			patch("access_guard.sync.reap_disabled_and_blacklisted") as mock_reap,

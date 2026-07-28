@@ -9,9 +9,9 @@ it rode a whitelisted *read* method (e.g. a bulk-edit dialog backed by a
 
 Registered for doctype "*" (every save/delete on the site, not just
 ephemeral sessions - e.g. Administrator edits, the scheduler, even
-frappe.log_error()'s own Error Log insert). get_policy() can now raise
-(no silent POLICY_DEFAULTS fallback) and pull-and-verify synchronously on
-a cache miss, so it must never run for a request that isn't even a granted
+frappe.log_error()'s own Error Log insert). get_policy() can raise (no
+default policy to fall back to) and pull-and-verify synchronously on a
+cache miss, so it must never run for a request that isn't even a granted
 session - check find_grant_by_sid FIRST (cheap, local, can't recurse) and
 only touch policy once we know this is a real ephemeral session, which by
 construction already has a policy cached (accept() pulls one before a
