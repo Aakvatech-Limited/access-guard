@@ -66,15 +66,28 @@ attacker-influenced pre-verification): alnum/`-`/`_` only, with a realpath-conta
 ## Enforcement is code, not DB permissions
 
 The ephemeral user holds all roles (System Manager), so DB permissions gate nothing.
-Enforcement keys entirely off `find_grant_by_sid(frappe.session.sid)` — "is this sid in a
-grant file?". Everything that enforces or logs uses that same test:
+Enforcement keys off **`grants.current_grant()`** — the one test for "does policy apply
+here?". Everything that enforces or logs uses it.
+
+**Why not `find_grant_by_sid(frappe.session.sid)` alone** (it used to be): `frappe.set_user()`
+overwrites `session.sid` with the *username*, and `background_jobs.execute_job` calls it — so
+inside any worker a sid-only lookup finds nothing and enforcement **fails open**. That covered
+bulk delete (>10 docs), bulk update/submit/cancel (≥20), queued submit, `rename_doc(enqueue=True)`
+and Data Import — all reachable from the stock desk UI. `current_grant()` tries the sid first
+(in a real request it names the exact session, which matters when one ephemeral user holds
+several grants) and falls back to the user's newest grant, which survives `set_user`.
+
+Resolved `jti` is then **passed into** `log_request`/`log_doc_event` rather than re-derived
+there. Re-deriving at `after_commit` time meant a logout in the same request deleted the grant
+and silently dropped the line for a write that *did* commit.
 
 - `session_guard` on `doc_events["*"]` (`before_validate` → create/write/submit,
-  `before_cancel`, `on_trash`, `before_rename` — no separate `after_rename`,
-  the {old_name, new_name} payload is fully known before the rename even
-  happens): `deny` →
+  `before_update_after_submit` → write (amending a submitted doc reaches neither
+  `before_validate` nor `before_cancel`), `before_cancel`, `on_trash`,
+  `before_rename` — no separate `after_rename`, the {old_name, new_name} payload
+  is fully known before the rename even happens): `deny` →
   `frappe.throw(PolicyDeniedError)` before write, logged immediately (nothing
-  commits on a deny); `warn` → interstitial `msgprint` + an `after_commit`
+  commits on a deny); `warn` → a non-blocking `msgprint` alert + an `after_commit`
   doc-log. Always-log doctypes are decided in the same pass (one log line
   either way, never both) and now cover submit/cancel/rename too, not just
   write/delete. `write`/`submit` log a diff (`Version.get_diff` against the

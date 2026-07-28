@@ -28,6 +28,7 @@ from access_guard.protocol import (
 	POLICY_SESSION_EXPIRY_SECONDS,
 	PV,
 	transport_token_hash,
+	utc_iso,
 )
 
 # Test-only fixture: a full, realistic policy shape for minting test policy
@@ -60,7 +61,7 @@ def stub_policy_file(policy: dict, verified_at: str | None = None) -> None:
 		policy_path(),
 		{
 			"policy": policy,
-			"verified_at": verified_at or frappe.utils.now_datetime().isoformat(),
+			"verified_at": verified_at or utc_iso(),
 		},
 	)
 	frappe.cache.delete_value(POLICY_CACHE_KEY)

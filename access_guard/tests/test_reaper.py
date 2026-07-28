@@ -10,6 +10,7 @@ from frappe.tests.utils import FrappeTestCase
 
 from access_guard.config_utils import atomic_write_json, policy_path, read_json
 from access_guard.grants import delete_grant, read_grant, write_grant
+from access_guard.protocol import utc_iso
 from access_guard.reaper import reap_disabled_and_blacklisted, reap_idle_sessions
 
 
@@ -69,7 +70,7 @@ class TestReaper(FrappeTestCase):
 				"user_email": email,
 				"user": user,
 				"sid": sid,
-				"issued_at": frappe.utils.now_datetime().isoformat(),
+				"issued_at": utc_iso(),
 			},
 		)
 
@@ -110,7 +111,7 @@ class TestReaper(FrappeTestCase):
 		original = read_json(path) if os.path.exists(path) else None
 		atomic_write_json(
 			path,
-			{"policy": policy, "verified_at": frappe.utils.now_datetime().isoformat()},
+			{"policy": policy, "verified_at": utc_iso()},
 		)
 		clear_policy_cache()
 
@@ -136,7 +137,7 @@ class TestReaper(FrappeTestCase):
 				"user_email": email,
 				"user": user,
 				"sid": sid,
-				"issued_at": frappe.utils.now_datetime().isoformat(),
+				"issued_at": utc_iso(),
 			},
 		)
 		return user

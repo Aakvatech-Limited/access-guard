@@ -22,6 +22,12 @@ doc_events = {
 		"before_validate": [
 			"access_guard.session_guard.before_validate",
 		],
+		# Amending an already-submitted doc takes neither of the paths above:
+		# run_before_save_methods gates before_validate on _action in
+		# ("save", "submit"), and update_after_submit is a third action - so
+		# without this, changing any allow_on_submit field was unenforced and
+		# unlogged (standard desk "Update" button on a submitted doc).
+		"before_update_after_submit": "access_guard.session_guard.before_update_after_submit",
 		"before_cancel": "access_guard.session_guard.before_cancel",
 		"on_trash": [
 			"access_guard.session_guard.on_trash",

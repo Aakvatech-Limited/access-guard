@@ -12,6 +12,7 @@ import json
 
 import frappe
 
+from access_guard.grants import current_grant
 from access_guard.logging_ import log_request
 
 
@@ -34,11 +35,9 @@ def _resolve_path() -> str | None:
 	return path or None
 
 
-def _current_sid() -> str | None:
-	try:
-		return frappe.session.sid
-	except Exception:
-		return None
+def _current_jti() -> str | None:
+	jti, _record = current_grant()
+	return jti
 
 
 def _request_params() -> dict:
@@ -81,8 +80,8 @@ def after_request(response=None):
 	path = _resolve_path()
 	if not path:
 		return
-	sid = _current_sid()
-	if not sid:
+	jti = _current_jti()
+	if not jti:
 		return
 
 	code = None
@@ -94,4 +93,4 @@ def after_request(response=None):
 	except Exception:
 		pass
 
-	log_request(sid, path, _http_method(), status, code, _request_params(), _request_body())
+	log_request(jti, path, _http_method(), status, code, _request_params(), _request_body())

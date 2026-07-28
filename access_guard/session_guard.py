@@ -19,7 +19,7 @@ new_name} instead, via the same shared enforcement pass (see before_rename).
 import frappe
 from frappe.core.doctype.version.version import get_diff
 
-from access_guard.grants import find_grant_by_sid
+from access_guard.grants import current_grant
 from access_guard.logging_ import log_doc_event
 from access_guard.policy import get_enforce_mode, get_policy
 from access_guard.protocol import MODE_DENY, MODE_WARN, POLICY_ALWAYS_LOG_DOCTYPES, PolicyDeniedError
@@ -28,13 +28,9 @@ _DIFFABLE_ACTIONS = ("write", "submit")
 
 
 def _current_ephemeral_jti() -> str | None:
-	try:
-		sid = frappe.session.sid
-	except Exception:
-		return None
-	if not sid:
-		return None
-	jti, _record = find_grant_by_sid(sid)
+	"""The jti to enforce/log against, or None. sid when there is a real one,
+	else the user's newest grant - see grants.current_grant()."""
+	jti, _record = current_grant()
 	return jti
 
 
@@ -86,7 +82,7 @@ def _enforce_for_doc(doc, action: str, *, old_name=None, new_name=None, payload=
 		# state IS the final state here, there's no later mutation to wait for.
 		doc_snapshot, diff = payload()
 		log_doc_event(
-			frappe.session.sid,
+			jti,
 			doc.doctype,
 			old_name if old_name is not None else doc.name,
 			f"denied:{action}",
@@ -112,12 +108,14 @@ def _enforce_for_doc(doc, action: str, *, old_name=None, new_name=None, payload=
 
 	always_log = doc.doctype in (get_policy().get(POLICY_ALWAYS_LOG_DOCTYPES) or [])
 	if mode == MODE_WARN or always_log:
-		sid = frappe.session.sid
+		# jti captured now, not re-resolved inside _log: by commit time the
+		# grant may be gone (a logout in the same request deletes it), which
+		# used to silently drop the line for a write that did commit.
 		name = new_name if new_name is not None else doc.name
 
 		def _log():
 			doc_snapshot, diff = payload()
-			log_doc_event(sid, doc.doctype, name, action, doc=doc_snapshot, diff=diff)
+			log_doc_event(jti, doc.doctype, name, action, doc=doc_snapshot, diff=diff)
 
 		frappe.db.after_commit.add(_log)
 
@@ -132,6 +130,16 @@ def before_validate(doc, method=None):
 	else:
 		action = "create" if doc.is_new() else "write"
 	_enforce_for_doc(doc, action)
+
+
+def before_update_after_submit(doc, method=None):
+	"""doc_events['*']['before_update_after_submit'] — amending an
+	already-submitted doc (allow_on_submit fields). Its own hook because
+	run_before_save_methods only fires before_validate for _action in
+	("save", "submit"), so this path reaches neither before_validate nor
+	before_cancel. Enforced as "write": it is a modification of an existing
+	doc, which is what the rule vocabulary already expresses."""
+	_enforce_for_doc(doc, "write")
 
 
 def before_cancel(doc, method=None):

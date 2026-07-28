@@ -12,7 +12,6 @@ from frappe.auth import SAFE_HTTP_METHODS
 
 from access_guard.config_utils import append_line, logs_dir, safe_jti_path
 from access_guard.constants import LOG_KIND_DOC, LOG_KIND_REQUEST
-from access_guard.grants import find_grant_by_sid
 from access_guard.hub_client import report_session_event
 from access_guard.policy import get_policy
 from access_guard.protocol import POLICY_LOG_READS, POLICY_MAX_KEY_SIZE_BYTES, utc_iso
@@ -118,7 +117,7 @@ def log_session_event(jti: str, event: str, reason: str | None = None) -> None:
 
 
 def log_request(
-	sid: str,
+	jti: str,
 	path: str,
 	http_method: str,
 	status: str,
@@ -134,9 +133,10 @@ def log_request(
 	query/form field of the same name. Both go through _to_json_per_key: each
 	top-level key is truncated independently when the value is a dict (so one
 	oversized field, in params or in a JSON-object body, can't push a small
-	one out of the line), or the whole value is capped when it isn't."""
-	jti, _grant = find_grant_by_sid(sid)
-	if jti is None:
+	one out of the line), or the whole value is capped when it isn't.
+
+	Takes the resolved `jti` (see log_doc_event) rather than a sid to look up."""
+	if not jti:
 		return
 
 	policy = get_policy()
@@ -161,7 +161,7 @@ def log_request(
 
 
 def log_doc_event(
-	sid: str, doctype: str, name: str, action: str, *, doc: dict | None = None, diff: dict | None = None
+	jti: str, doctype: str, name: str, action: str, *, doc: dict | None = None, diff: dict | None = None
 ) -> None:
 	"""Called after_commit (or synchronously for a denied attempt, which
 	never commits). Exactly one of doc/diff is given:
@@ -171,9 +171,13 @@ def log_doc_event(
 	- diff: Version.get_diff(before, after) shape - write and submit, where
 	  a before-state exists and the full doc would mostly repeat unchanged
 	  fields already on the hub from a prior event.
-	Size-exempt either way (DESIGN.md: sensitive-doctype changes)."""
-	jti, _grant = find_grant_by_sid(sid)
-	if jti is None:
+	Size-exempt either way (DESIGN.md: sensitive-doctype changes).
+
+	Takes the resolved `jti`, not a sid to look up: the caller already resolved
+	it when it decided to enforce, and re-resolving here at commit time made the
+	line droppable - logging out mid-transaction deleted the grant, so the
+	lookup failed and a write that DID commit went unlogged."""
+	if not jti:
 		return
 	fields = {
 		"ts": _now(),

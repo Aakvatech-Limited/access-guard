@@ -84,11 +84,29 @@ def _sid_map(grants: dict[str, dict]) -> dict[str, str]:
 	return {record["sid"]: jti for jti, record in grants.items() if record.get("sid")}
 
 
+def _user_map(grants: dict[str, dict]) -> dict[str, str]:
+	"""user -> jti. Several grants can name one user (accept() reuses the User
+	row on re-request), so the newest issued_at wins - all of them answer "is
+	this user ephemeral" identically, and the newest is the live one."""
+
+	def issued(jti):
+		return grants[jti].get("issued_at") or ""
+
+	by_user: dict[str, str] = {}
+	for jti, record in grants.items():
+		user = record.get("user")
+		if not user:
+			continue
+		if user not in by_user or issued(jti) > issued(by_user[user]):
+			by_user[user] = jti
+	return by_user
+
+
 def _refresh_cache(grants: dict[str, dict]) -> None:
 	"""Called from inside the file lock only - see module docstring."""
 	frappe.cache.set_value(
 		GRANTS_CACHE_KEY,
-		{"grants": grants, "sid_map": _sid_map(grants)},
+		{"grants": grants, "sid_map": _sid_map(grants), "user_map": _user_map(grants)},
 		expires_in_sec=GRANTS_CACHE_TTL_SECONDS,
 	)
 
@@ -120,7 +138,8 @@ def update_grant(jti: str, **fields) -> dict | None:
 
 
 def _cached_grants() -> dict:
-	"""{"grants": {...}, "sid_map": {...}}, redis-first - see module docstring.
+	"""{"grants": ..., "sid_map": ..., "user_map": ...}, redis-first - see
+	module docstring.
 
 	expires=True: RedisWrapper.get_value's default caches a miss into
 	frappe.local.cache, but set_value skips that cache whenever expires_in_sec
@@ -128,7 +147,9 @@ def _cached_grants() -> dict:
 	write there would leave frappe.local.cache stuck on a stale None for the
 	rest of the process. expires=True avoids frappe.local.cache entirely."""
 	cached = frappe.cache.get_value(GRANTS_CACHE_KEY, expires=True)
-	if cached is not None:
+	# A cached blob from a build before user_map existed would KeyError in
+	# find_grant_by_user - i.e. fail open on an upgrade. Treat it as a miss.
+	if cached is not None and "user_map" in cached:
 		return cached
 
 	# Same lock the writers use, so a concurrent writer can't land between
@@ -136,7 +157,7 @@ def _cached_grants() -> dict:
 	with locked_file(_grants_lock_path()):
 		grants = read_json(grants_path(), default={})
 		_refresh_cache(grants)
-		return {"grants": grants, "sid_map": _sid_map(grants)}
+		return {"grants": grants, "sid_map": _sid_map(grants), "user_map": _user_map(grants)}
 
 
 def all_grants() -> dict[str, dict]:
@@ -155,13 +176,53 @@ def delete_grant(jti: str) -> None:
 
 
 def find_grant_by_sid(sid: str) -> tuple[str, dict] | tuple[None, None]:
-	"""'Is this session ephemeral?' — frappe.session.sid appears as `sid` in
-	some grant record (PROTOCOL.md §6)."""
+	"""'Is this exact session ephemeral?' — `sid` appears as some grant's `sid`
+	(PROTOCOL.md §6). Narrower than find_grant_by_user: use that one to decide
+	whether policy applies, since a background job has no real sid."""
 	cached = _cached_grants()
 	jti = cached["sid_map"].get(sid)
 	if jti is None:
 		return None, None
 	return jti, cached["grants"][jti]
+
+
+def find_grant_by_user(user: str) -> tuple[str, dict] | tuple[None, None]:
+	"""'Is this USER ephemeral?', answering with their newest grant. The
+	fallback for when there's no usable sid - see current_grant()."""
+	if not user:
+		return None, None
+	cached = _cached_grants()
+	jti = cached["user_map"].get(user)
+	if jti is None:
+		return None, None
+	return jti, cached["grants"][jti]
+
+
+def current_grant() -> tuple[str, dict] | tuple[None, None]:
+	"""The grant the current execution context acts under - the single test for
+	"does policy apply here?".
+
+	sid first: in a real request it names the exact session that acted, which
+	matters when one ephemeral user holds several grants (accept() reuses the
+	User row on re-request).
+
+	User second, because sid is not always a sid. frappe.set_user() overwrites
+	session.sid with the *username*, and background_jobs.execute_job calls it -
+	so in any worker a sid-only test finds nothing and enforcement fails OPEN.
+	That covers bulk delete (>10 docs), bulk update/submit/cancel (>=20), queued
+	submit, rename with enqueue=True and Data Import, all reachable from the
+	stock desk UI. The user survives all of them."""
+	session = getattr(frappe.local, "session", None)
+	if not session:
+		return None, None
+
+	sid = session.get("sid")
+	if sid:
+		jti, record = find_grant_by_sid(sid)
+		if jti is not None:
+			return jti, record
+
+	return find_grant_by_user(session.get("user"))
 
 
 def ephemeral_users() -> set[str]:

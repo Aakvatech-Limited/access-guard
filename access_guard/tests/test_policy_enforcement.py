@@ -8,7 +8,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from access_guard.grants import write_grant
-from access_guard.protocol import PolicyDeniedError
+from access_guard.protocol import PolicyDeniedError, utc_iso
 
 
 def _write_fake_grant(jti: str, sid: str, user: str):
@@ -21,7 +21,7 @@ def _write_fake_grant(jti: str, sid: str, user: str):
 			"user_email": user,
 			"user": user,
 			"sid": sid,
-			"issued_at": frappe.utils.now_datetime().isoformat(),
+			"issued_at": utc_iso(),
 		},
 	)
 
@@ -93,7 +93,7 @@ class TestPolicyEnforcement(FrappeTestCase):
 
 		deny_policy = {
 			"policy": {"pv": 1, "rules": [{"doctype": "ToDo", "actions": ["rename"], "mode": "deny"}]},
-			"verified_at": frappe.utils.now_datetime().isoformat(),
+			"verified_at": utc_iso(),
 		}
 		path = policy_path()
 		original = read_json(path) if os.path.exists(path) else None
@@ -146,7 +146,7 @@ class TestPolicyEnforcement(FrappeTestCase):
 				"pv": 1,
 				"rules": [{"doctype": "ToDo", "actions": ["create"], "mode": "warn"}],
 			},
-			"verified_at": frappe.utils.now_datetime().isoformat(),
+			"verified_at": utc_iso(),
 		}
 		original = None
 		import os

@@ -14,6 +14,7 @@ from frappe.tests.utils import FrappeTestCase
 from access_guard.config_utils import atomic_write_json, policy_path, read_json
 from access_guard.grants import delete_grant, write_grant
 from access_guard.logging_ import _TRUNCATED_MARKER, log_file_path
+from access_guard.protocol import utc_iso
 
 
 def _write_fake_grant(jti: str, sid: str, user: str = "logtest@example.com"):
@@ -26,7 +27,7 @@ def _write_fake_grant(jti: str, sid: str, user: str = "logtest@example.com"):
 			"user_email": user,
 			"user": user,
 			"sid": sid,
-			"issued_at": frappe.utils.now_datetime().isoformat(),
+			"issued_at": utc_iso(),
 		},
 	)
 
@@ -219,7 +220,7 @@ class TestLogging(FrappeTestCase):
 
 		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
 			log_request(
-				sid,
+				jti,
 				"some.whitelisted.method",
 				"GET",
 				"ok",
@@ -450,7 +451,7 @@ class TestLogging(FrappeTestCase):
 
 		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
 			log_request(
-				sid,
+				jti,
 				"some.whitelisted.method",
 				"GET",
 				"ok",
