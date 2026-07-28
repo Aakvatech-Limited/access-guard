@@ -148,7 +148,8 @@ def _cached_grants() -> dict:
 	rest of the process. expires=True avoids frappe.local.cache entirely."""
 	cached = frappe.cache.get_value(GRANTS_CACHE_KEY, expires=True)
 	# A cached blob from a build before user_map existed would KeyError in
-	# find_grant_by_user - i.e. fail open on an upgrade. Treat it as a miss.
+	# current_grant's user lookup - i.e. fail open on an upgrade. Treat it as a
+	# miss.
 	if cached is not None and "user_map" in cached:
 		return cached
 
@@ -175,27 +176,20 @@ def delete_grant(jti: str) -> None:
 		_refresh_cache(grants)
 
 
+def _lookup(cached: dict, map_key: str, value: str) -> tuple[str, dict] | tuple[None, None]:
+	if not value:
+		return None, None
+	jti = cached[map_key].get(value)
+	if jti is None:
+		return None, None
+	return jti, cached["grants"][jti]
+
+
 def find_grant_by_sid(sid: str) -> tuple[str, dict] | tuple[None, None]:
 	"""'Is this exact session ephemeral?' — `sid` appears as some grant's `sid`
-	(PROTOCOL.md §6). Narrower than find_grant_by_user: use that one to decide
+	(PROTOCOL.md §6). Narrower than current_grant(): use that one to decide
 	whether policy applies, since a background job has no real sid."""
-	cached = _cached_grants()
-	jti = cached["sid_map"].get(sid)
-	if jti is None:
-		return None, None
-	return jti, cached["grants"][jti]
-
-
-def find_grant_by_user(user: str) -> tuple[str, dict] | tuple[None, None]:
-	"""'Is this USER ephemeral?', answering with their newest grant. The
-	fallback for when there's no usable sid - see current_grant()."""
-	if not user:
-		return None, None
-	cached = _cached_grants()
-	jti = cached["user_map"].get(user)
-	if jti is None:
-		return None, None
-	return jti, cached["grants"][jti]
+	return _lookup(_cached_grants(), "sid_map", sid)
 
 
 def current_grant() -> tuple[str, dict] | tuple[None, None]:
@@ -216,13 +210,15 @@ def current_grant() -> tuple[str, dict] | tuple[None, None]:
 	if not session:
 		return None, None
 
-	sid = session.get("sid")
-	if sid:
-		jti, record = find_grant_by_sid(sid)
-		if jti is not None:
-			return jti, record
+	# One _cached_grants() for both lookups: this runs on nearly every request,
+	# and the two maps come out of the same blob anyway.
+	cached = _cached_grants()
 
-	return find_grant_by_user(session.get("user"))
+	jti, record = _lookup(cached, "sid_map", session.get("sid"))
+	if jti is not None:
+		return jti, record
+
+	return _lookup(cached, "user_map", session.get("user"))
 
 
 def ephemeral_users() -> set[str]:
