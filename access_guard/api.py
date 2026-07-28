@@ -16,6 +16,7 @@ from access_guard.protocol import (
 	CLAIM_USER_FIRST_NAME,
 	CLAIM_USER_LAST_NAME,
 	CLAIM_USER_MIDDLE_NAME,
+	POLICY_DISALLOW_SIMULTANEOUS_SESSIONS,
 	POLICY_NAME_SUFFIX,
 	AccessProtocolError,
 	EphemeralUserCollisionError,
@@ -108,7 +109,12 @@ def accept(claims: dict):
 
 	policy = get_policy()
 	user = _create_or_reuse_ephemeral_user(
-		user_email, first_name, middle_name, last_name, policy.get(POLICY_NAME_SUFFIX)
+		user_email,
+		first_name,
+		middle_name,
+		last_name,
+		policy.get(POLICY_NAME_SUFFIX),
+		disallow_simultaneous=bool(policy.get(POLICY_DISALLOW_SIMULTANEOUS_SESSIONS)),
 	)
 	# Written after login, sid already known - see session_guard.py for the
 	# narrow gap this leaves during post_login() itself.
@@ -145,6 +151,7 @@ def _create_or_reuse_ephemeral_user(
 	middle_name: str | None,
 	last_name: str | None,
 	name_suffix: str,
+	disallow_simultaneous: bool,
 ):
 	"""Idempotent create keyed on user_email. first_name/middle_name/last_name
 	come straight from the hub's User record (protocol claims), not a
@@ -157,12 +164,27 @@ def _create_or_reuse_ephemeral_user(
 	calling this — no ignore_permissions needed, and owner/modified_by are
 	correctly stamped Administrator, not Guest.
 
+	simultaneous_sessions is set from the current policy on every call, reuse
+	included - not just at first creation - so a later policy change actually
+	takes effect for a user who requests access again, rather than freezing
+	whatever was true the first time this email was provisioned. Safe to
+	change on an already-live reused user: Frappe only enforces the cap
+	(get_sessions_to_clear's offset logic, frappe/sessions.py) when a NEW
+	session is created, which is exactly what this reuse path is about to do
+	via _start_session - it doesn't retroactively evict anything before that.
+
 	Reuse is only safe for a user THIS guard provisioned. If the email already
 	belongs to a standing (non-ephemeral) user, refuse — handing them a fresh
 	System Manager session is exactly the standing-access abuse we prevent.
 	Ephemeral membership is grant-file-derived (ephemeral_users()), never a DB
 	flag: a User row exists iff a live grant names them (the reaper deletes both
 	together), so this is the authoritative test."""
+	# Frappe's get_sessions_to_clear falls back to 1 on a falsy value (`or 1`),
+	# so 0 does NOT mean unlimited here - it's as restrictive as 1. There's no
+	# real "unlimited" sentinel in core, so "off" uses a large-enough cap
+	# instead of relying on that.
+	simultaneous_sessions = 1 if disallow_simultaneous else 100
+
 	if frappe.db.exists("User", user_email):
 		from access_guard.grants import ephemeral_users
 
@@ -171,6 +193,7 @@ def _create_or_reuse_ephemeral_user(
 				f"{user_email} is already a standing user on this site; refusing to "
 				"start an ephemeral session for it."
 			)
+		frappe.db.set_value("User", user_email, "simultaneous_sessions", simultaneous_sessions)
 		return user_email
 
 	last_name = last_name or ""
@@ -185,7 +208,7 @@ def _create_or_reuse_ephemeral_user(
 	user_doc.send_welcome_email = 0
 	user_doc.enabled = 1
 	user_doc.user_type = "System User"
-	user_doc.simultaneous_sessions = 1
+	user_doc.simultaneous_sessions = simultaneous_sessions
 	user_doc.insert()
 	from frappe.core.doctype.user.user import get_all_roles
 

@@ -102,10 +102,19 @@ def _write(jti: str, kind: str, fields: dict) -> None:
 
 def log_session_event(jti: str, event: str, reason: str | None = None) -> None:
 	"""No local file — pushed to the Access Grant via a background worker
-	(see report_session_event), not gated on log_sync_enabled. Enqueued so
-	an unreachable/slow hub never blocks the request or job this runs in."""
+	(see report_session_event), not gated on log_sync_enabled. Enqueued
+	immediately, not enqueue_after_commit: several callers (e.g. accept(),
+	reached over GET for a redirectable link) never actually commit their
+	transaction - Frappe's end-of-request sync_database() only commits on
+	unsafe HTTP methods, so an after-commit callback there would silently
+	never fire. Enqueuing immediately just hands the job to redis, which
+	doesn't depend on this request's DB transaction outcome at all."""
 	frappe.enqueue(
-		report_session_event, queue="short", enqueue_after_commit=True, jti=jti, event=event, reason=reason
+		report_session_event,
+		queue="short",
+		jti=jti,
+		session_event=event,
+		reason=reason,
 	)
 
 

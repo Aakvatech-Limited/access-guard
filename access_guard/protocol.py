@@ -55,6 +55,7 @@ POLICY_PUSH_GRACE_DAYS = "push_grace_days"
 POLICY_NAME_SUFFIX = "name_suffix"  # appended to ephemeral user's last_name, e.g. "(consultant)"
 POLICY_ACCESS_DISABLED = "access_disabled"  # global kill switch: reap every live grant, refuse new ones
 POLICY_BLACKLISTED_EMAILS = "blacklisted_emails"  # user_email values to reap + refuse, individually
+POLICY_DISALLOW_SIMULTANEOUS_SESSIONS = "disallow_simultaneous_sessions"  # default off: Frappe's own User.simultaneous_sessions default (2) applies; on: capped to 1
 
 MODE_DENY = "deny"
 MODE_WARN = "warn"

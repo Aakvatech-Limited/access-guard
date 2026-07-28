@@ -39,13 +39,18 @@ def push_logs(jti: str, log_kind: str, lines: str) -> dict | None:
 	return _post("access_hub.api.push_logs", {"jti": jti, "log_kind": log_kind, "lines": lines}, timeout=30)
 
 
-def report_session_event(jti: str, event: str, reason: str | None = None) -> dict | None:
+def report_session_event(jti: str, session_event: str, reason: str | None = None) -> dict | None:
 	"""Immediate (not hourly-batched) push of a session lifecycle event, so
 	the hub's Access Grant reflects accept/login/logout in near-real-time.
-	Always sent - unlike log push, there is no policy opt-out for this."""
+	Always sent - unlike log push, there is no policy opt-out for this.
+	Parameter is `session_event`, not `event` - frappe.enqueue() has its own
+	same-named `event` kwarg (job-clearing) that steals a plain `event=...`
+	before it reaches **kwargs, silently dropping it and dying async with a
+	missing-argument TypeError. The wire field name (PROTOCOL.md §5) is
+	still "event", just not this function's local parameter name."""
 	return _post(
 		"access_hub.api.report_session_event",
-		{"jti": jti, "event": event, "reason": reason},
+		{"jti": jti, "event": session_event, "reason": reason},
 	)
 
 

@@ -2,7 +2,7 @@
 const STORAGE_KEY = "access_guard_notice_shown_hash";
 const NOTICE_TEXT = "Your activity on this site is being recorded for audit.";
 
-frappe.ready(() => {
+$(document).on("app_ready", () => {
 	const boot = frappe.boot || {};
 	if (!boot.access_guard_ephemeral) {
 		return;

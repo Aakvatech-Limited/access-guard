@@ -94,13 +94,19 @@ grant file?". Everything that enforces or logs uses that same test:
 
 ## Reaper ordering gotcha
 
-`_reap_user` deletes the **grant file before the User**. `User.on_trash` →
+`_reap_grants` deletes each **grant file before the User**. `User.on_trash` →
 `login_manager.logout()` → re-fires `on_logout` → `teardown_on_logout` → back into
-`_reap_user`. With the grant already gone, the recursed `find_grant_by_sid` returns nothing
+`_reap_grants`. With the grant already gone, the recursed `find_grant_by_sid` returns nothing
 and no-ops; delete the User first and it recurses forever. The reaper only ever touches users
 in the grant-file-derived namespace (`ephemeral_users()`, never a DB query) — a standing
 client user is never deletable, and reuse of an existing email is refused for the same reason
 (`EphemeralUserCollisionError`).
+
+Two jtis can share one ephemeral `user` (`accept()` reuses the User row if the same email
+accepts again while an earlier grant is still live), so reaping is keyed **per user**, not per
+grant: `_reap_users` groups grants by user, fetches each user's live sessions in one query
+(never one per grant), and only deletes the shared User once none of its grants has a live
+session left — deleting it early would tear down a sibling grant's still-active session.
 
 ## Test approach
 

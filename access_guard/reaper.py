@@ -9,6 +9,14 @@ treats "is this even still a live user" via frappe.db, not the reverse).
 Never talks to Redis directly. Session deletion goes through
 `frappe.sessions.delete_session`, which clears both the `tabSessions` DB row
 and the corresponding Redis-backed session cache in one call.
+
+Both reap paths (idle-expiry, kill-switch/denylist) share `_reap_users`: per
+user, kill the doomed sessions, drop every grant whose sid is then gone, and
+delete the User only if none of its grants survived. Keyed per user, not per
+grant — two jtis can share one ephemeral `user` (accept() reuses the User row
+when the same email accepts again while an earlier grant is live), and
+deleting it takes down *all* its sessions. One session query per reap, never
+one per grant.
 """
 
 import frappe
@@ -32,26 +40,31 @@ def _effective_expiry_seconds() -> int:
 	return int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0)
 
 
-def _live_sessions_for_user(user: str) -> list[dict]:
-	return _live_sessions_for_users([user])[user]
-
-
-def _live_sessions_for_users(users: list[str]) -> dict[str, list[dict]]:
-	"""One query for every user in `users`, grouped in Python - avoids the
-	N+1 a per-user query would cost when called from reap_idle_sessions over
-	every grant."""
+def _live_sessions_for_users(users) -> dict[str, list[dict]]:
+	"""{user: [{sid, lastupdate}, ...]} in one query - a kill-switch tick can
+	cover every grant on the site, so per-user lookups would be N+1."""
 	by_user: dict[str, list[dict]] = {user: [] for user in users}
-	if not users:
+	if not by_user:
 		return by_user
 	sessions = frappe.qb.DocType("Sessions")
 	rows = (
 		frappe.qb.from_(sessions)
 		.select(sessions.user, sessions.sid, sessions.lastupdate)
-		.where(sessions.user.isin(users))
+		.where(sessions.user.isin(list(by_user)))
 		.run(as_dict=True)
 	)
 	for row in rows:
 		by_user[row["user"]].append(row)
+	return by_user
+
+
+def _grants_by_user(grants: dict[str, dict]) -> dict[str, list[str]]:
+	"""{user: [jti, ...]}. Grants with no `user` are skipped - _reap_users
+	handles those separately (no session/User to touch)."""
+	by_user: dict[str, list[str]] = {}
+	for jti, record in grants.items():
+		if record.get("user"):
+			by_user.setdefault(record["user"], []).append(jti)
 	return by_user
 
 
@@ -63,35 +76,16 @@ def _is_idle_expired(lastupdate, expiry_seconds: int) -> bool:
 
 
 def reap_idle_sessions() -> None:
-	"""scheduler_event, ~15 min. For each ephemeral session idle beyond the
-	effective expiry, kill it; once a grant's user has zero live sessions,
-	delete the user and report "reaped"."""
+	"""scheduler_event, ~15 min. Kills every ephemeral session idle beyond the
+	effective expiry, then reaps the grants left without a live session."""
 	expiry_seconds = _effective_expiry_seconds()
 	if expiry_seconds <= 0:
 		return  # no idle-expiry configured - not "expire everything immediately"
-	grants = all_grants()
 
-	users = [record.get("user") for record in grants.values() if record.get("user")]
-	sessions_by_user = _live_sessions_for_users(users)
+	def is_idle(row):
+		return _is_idle_expired(row["lastupdate"], expiry_seconds)
 
-	for jti, record in grants.items():
-		user = record.get("user")
-		sid = record.get("sid")
-		if not user:
-			continue
-
-		live_sessions = sessions_by_user[user]
-		live_sids = {row["sid"] for row in live_sessions}
-
-		for row in live_sessions:
-			if _is_idle_expired(row["lastupdate"], expiry_seconds):
-				delete_session(sid=row["sid"], user=user, reason="access_guard: idle expiry")
-				live_sids.discard(row["sid"])
-				if row["sid"] == sid:
-					log_session_event(jti, "logout", reason="idle_expired")
-
-		if not live_sids:
-			_reap_user(jti, record)
+	_reap_users(all_grants(), doomed=is_idle, reason="idle_expired")
 
 
 def reap_disabled_and_blacklisted() -> None:
@@ -111,48 +105,59 @@ def reap_disabled_and_blacklisted() -> None:
 	if not disabled and not denylisted:
 		return
 
-	for jti, record in all_grants().items():
-		if disabled or record.get("user_email") in denylisted:
-			_reap_now(jti, record, reason="access_disabled" if disabled else "policy_denied")
+	matched = {
+		jti: record
+		for jti, record in all_grants().items()
+		if disabled or record.get("user_email") in denylisted
+	}
+	reason = "access_disabled" if disabled else "policy_denied"
+	_reap_users(matched, doomed=lambda row: True, reason=reason)
 
 
-def _reap_now(jti: str, record: dict, *, reason: str) -> None:
-	user = record.get("user")
-	# Belt-and-suspenders, same as _reap_user: `user` comes from a grant
-	# record, which accept() only ever writes for an ephemeral user (a
-	# standing-user collision raises EphemeralUserCollisionError before any
-	# grant is written) - re-checking here means a future refactor can't
-	# accidentally kill sessions for an arbitrary/non-ephemeral user.
-	if user and _is_ephemeral_namespace_safe(user):
-		for row in _live_sessions_for_user(user):
-			delete_session(sid=row["sid"], user=user, reason=f"access_guard: {reason}")
-	log_session_event(jti, "logout", reason=reason)
-	_reap_user(jti, record)
+def _reap_users(grants: dict[str, dict], *, doomed, reason: str) -> None:
+	"""Kill each session `doomed(row)` selects, then reap every grant whose own
+	sid is no longer live, deleting the shared User once the last of its grants
+	goes. One session query for all users, none per grant."""
+	grants_by_user = _grants_by_user(grants)
+	sessions_by_user = _live_sessions_for_users(grants_by_user)
+
+	for user, jtis in grants_by_user.items():
+		live_sids = {row["sid"] for row in sessions_by_user[user]}
+		# Belt-and-suspenders: only touch users the grant namespace vouches for.
+		is_safe = _is_ephemeral_namespace_safe(user)
+		if is_safe:
+			for row in sessions_by_user[user]:
+				if doomed(row):
+					delete_session(sid=row["sid"], user=user, reason=f"access_guard: {reason}")
+					live_sids.discard(row["sid"])
+
+		# Grants whose sid is now gone are done; siblings with a live sid keep
+		# the User alive, so it's only deleted once every grant qualifies.
+		reaped = [jti for jti in jtis if grants[jti].get("sid") not in live_sids]
+		_reap_grants(reaped, reason=reason, user=user if is_safe and len(reaped) == len(jtis) else None)
+
+	# No `user` means no session/User to touch, just a stale record to drop.
+	_reap_grants([jti for jti, r in grants.items() if not r.get("user")], reason=reason, user=None)
 
 
-def _reap_user(jti: str, record: dict) -> None:
-	"""Deletes the grant BEFORE the User, not after: User.on_trash calls
-	login_manager.logout(), which re-fires on_logout -> teardown_on_logout
-	-> this function again. Without the grant gone first, that recursed
-	indefinitely (User still "exists" by the time find_grant_by_sid ran, so
-	it deleted itself again, forever). With the grant gone first, the
-	recursive call's find_grant_by_sid returns nothing and no-ops.
-	"""
-	user = record.get("user")
-	is_safe = user and _is_ephemeral_namespace_safe(user)
-	delete_grant(jti)
-	if is_safe and frappe.db.exists("User", user):
+def _reap_grants(jtis: list[str], *, reason: str, user: str | None) -> None:
+	"""Drop each grant, then `user` (if given) once they're all gone - in
+	that order, since User.on_trash re-fires on_logout -> teardown_on_logout,
+	and the recursive call needs the grant already gone to no-op instead of
+	looping forever. Events log after, so a failed cleanup can't claim a
+	logout that didn't happen."""
+	for jti in jtis:
+		delete_grant(jti)
+	if user and frappe.db.exists("User", user):
 		frappe.delete_doc("User", user, force=True, ignore_permissions=True)
 		frappe.db.commit()
-	log_session_event(jti, "logout", reason="reaped")
+	for jti in jtis:
+		log_session_event(jti, "logout", reason=reason)
 
 
 def _is_ephemeral_namespace_safe(user: str) -> bool:
-	"""Extra belt-and-suspenders check: the user we're about to delete must
-	actually be present in the grant-file-derived namespace (it is, by
-	construction, since we only ever get here from a grant record) — this
-	function exists so a future refactor can't accidentally call _reap_user
-	on an arbitrary user without going through the namespace filter."""
+	"""True only if `user` is named in a grant file - never trust a caller's
+	own idea of "is this ephemeral"."""
 	from access_guard.grants import ephemeral_users
 
 	return user in ephemeral_users()
@@ -179,8 +184,11 @@ def teardown_on_logout(login_manager=None) -> None:
 	if jti is None:
 		return  # not an ephemeral session
 
-	log_session_event(jti, "logout", reason="user_logout")
-
-	remaining = [row for row in _live_sessions_for_user(record.get("user")) if row["sid"] != sid]
-	if not remaining:
-		_reap_user(jti, record)
+	# `!= sid`: this session is still in tabSessions (core deletes it after
+	# this hook) but is on its way out, so it shouldn't count as keeping the
+	# User alive - any other live session (sibling grant or not) should.
+	user = record.get("user")
+	keep_user = not user or not _is_ephemeral_namespace_safe(user)
+	if not keep_user:
+		keep_user = any(row["sid"] != sid for row in _live_sessions_for_users([user])[user])
+	_reap_grants([jti], reason="user_logout", user=None if keep_user else user)
