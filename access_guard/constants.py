@@ -42,13 +42,13 @@ GRANTS_CACHE_TTL_SECONDS = 24 * 60 * 60
 # Two log kinds, each its own file (no per-line "type" needed - the filename
 # says it). Session lifecycle (login/logout) has no local file at
 # all: it's pushed straight to the hub, see logging_.log_session_event.
-LOG_KIND_REQUEST = "request"  # <jti>.log      — one line per whitelisted call
-LOG_KIND_DOC = "doc"  # <jti>.doc.log  — one line per committed change to an always-log doctype
+LOG_KIND_REQUEST = "request"  # <jti>.request.log — one line per whitelisted call
+LOG_KIND_DOC = "doc"  # <jti>.doc.log — one line per committed change to an always-log doctype
 
 # --- On-disk layout, under site/private/<PRIVATE_DIR>/ -----------------------
 PRIVATE_DIR = "access_guard"
 GRANTS_FILE = "grants.json"  # one shared file, {jti: record, ...} — authoritative grant records
 USED_JTI_FILE = "used_jti.json"  # replay set
 POLICY_FILE = "policy.json"  # {"policy": {...}, "verified_at": iso}
-LOGS_SUBDIR = "logs"  # <jti>.log, <jti>.doc.log
+LOGS_SUBDIR = "logs"  # <jti>.request.log, <jti>.doc.log
 PUSHED_SUBDIR = "pushed"  # <jti>.<kind>.meta — push-ack state for retention

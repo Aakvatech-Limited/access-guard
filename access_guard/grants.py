@@ -32,11 +32,6 @@ from access_guard.protocol import TokenReplayError
 from access_guard.tokens import parse_iso
 
 
-def is_jti_used(jti: str) -> bool:
-	data = read_json(used_jti_path(), default={})
-	return jti in data
-
-
 def mark_jti_used(jti: str, exp: str) -> None:
 	"""Atomically check-and-set. Raises TokenReplayError if already used.
 

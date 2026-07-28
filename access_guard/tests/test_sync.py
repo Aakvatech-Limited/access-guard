@@ -84,13 +84,23 @@ class TestPushAllLogsIsIncremental(FrappeTestCase):
 
 	def setUp(self):
 		self.jti = f"test-push-incremental-{self._testMethodName}-jti"
-		self.log_path = os.path.join(logs_dir(), f"{self.jti}.log")
+		self.log_path = os.path.join(logs_dir(), f"{self.jti}.request.log")
 		self.addCleanup(self._cleanup)
 
 	def _cleanup(self):
 		for path in (self.log_path, _pushed_meta_path(self.jti, "request")):
 			if os.path.exists(path):
 				os.remove(path)
+
+	def _call_for_this_jti(self, mock_push):
+		"""_push_all_logs() scans the whole logs_dir(), so other tests'
+		leftover files (if any weren't cleaned up) get pushed too in the
+		same call - find the one call for THIS test's jti rather than
+		assuming it's the only or the last one."""
+		for call in mock_push.call_args_list:
+			if call.kwargs.get("jti") == self.jti:
+				return call
+		self.fail(f"push_logs was never called for jti={self.jti!r}")
 
 	def test_second_sync_only_sends_lines_written_since_first(self):
 		with open(self.log_path, "w") as f:
@@ -101,7 +111,7 @@ class TestPushAllLogsIsIncremental(FrappeTestCase):
 		) as mock_push:
 			_push_all_logs()
 
-		self.assertEqual(mock_push.call_args.kwargs["lines"], "ts=1 path=a\n")
+		self.assertEqual(self._call_for_this_jti(mock_push).kwargs["lines"], "ts=1 path=a\n")
 
 		with open(self.log_path, "a") as f:
 			f.write("ts=2 path=b\n")
@@ -111,7 +121,7 @@ class TestPushAllLogsIsIncremental(FrappeTestCase):
 		) as mock_push:
 			_push_all_logs()
 
-		self.assertEqual(mock_push.call_args.kwargs["lines"], "ts=2 path=b\n")
+		self.assertEqual(self._call_for_this_jti(mock_push).kwargs["lines"], "ts=2 path=b\n")
 
 	def test_failed_push_does_not_advance_offset(self):
 		with open(self.log_path, "w") as f:
@@ -127,4 +137,4 @@ class TestPushAllLogsIsIncremental(FrappeTestCase):
 
 		# offset never advanced on the failed attempt, so the retry still
 		# includes the same content, not an empty tail.
-		self.assertEqual(mock_push.call_args.kwargs["lines"], "ts=1 path=a\n")
+		self.assertEqual(self._call_for_this_jti(mock_push).kwargs["lines"], "ts=1 path=a\n")

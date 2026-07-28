@@ -22,7 +22,6 @@ def _write_fake_grant(jti: str, sid: str, user: str):
 			"user": user,
 			"sid": sid,
 			"issued_at": frappe.utils.now_datetime().isoformat(),
-			"effective_expiry_seconds": 21600,
 		},
 	)
 
@@ -33,10 +32,17 @@ class TestPolicyEnforcement(FrappeTestCase):
 		self.addCleanup(self._cleanup)
 
 	def _cleanup(self):
+		import os
+
 		from access_guard.grants import delete_grant
+		from access_guard.logging_ import log_file_path
 
 		for jti in self._grant_jtis:
 			delete_grant(jti)
+			for kind in ("request", "doc"):
+				path = log_file_path(jti, kind)
+				if os.path.exists(path):
+					os.remove(path)
 
 	def _fake_ephemeral_session(self, jti: str, user: str = "ephemeral@example.com"):
 		sid = f"fake-sid-{jti}"
@@ -70,12 +76,49 @@ class TestPolicyEnforcement(FrappeTestCase):
 
 		with (
 			patch.object(frappe.local, "session", frappe._dict(sid=sid, user="ephemeral@example.com")),
-			patch("access_guard.session_guard.enforce") as mock_enforce,
+			patch("access_guard.session_guard.get_enforce_mode") as mock_get_enforce_mode,
 		):
 			before_validate(doc)
 
-		mock_enforce.assert_called_once()
-		self.assertEqual(mock_enforce.call_args.args[1], "submit")
+		mock_get_enforce_mode.assert_called_once()
+		self.assertEqual(mock_get_enforce_mode.call_args.args[1], "submit")
+
+	def test_deny_rule_blocks_rename(self):
+		import os
+
+		from access_guard.config_utils import atomic_write_json, policy_path, read_json
+		from access_guard.tests.keys import clear_policy_cache
+
+		sid = self._fake_ephemeral_session("deny-rename-jti")
+
+		deny_policy = {
+			"policy": {"pv": 1, "rules": [{"doctype": "ToDo", "actions": ["rename"], "mode": "deny"}]},
+			"verified_at": frappe.utils.now_datetime().isoformat(),
+		}
+		path = policy_path()
+		original = read_json(path) if os.path.exists(path) else None
+		atomic_write_json(path, deny_policy)
+		clear_policy_cache()
+
+		todo = frappe.new_doc("ToDo")
+		todo.description = "rename-deny test"
+		todo.insert(ignore_permissions=True)
+		self.addCleanup(lambda: frappe.delete_doc("ToDo", todo.name, force=True, ignore_permissions=True))
+		frappe.db.commit()
+		old_name = todo.name
+
+		try:
+			with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="ephemeral@example.com")):
+				with self.assertRaises(PolicyDeniedError):
+					frappe.rename_doc("ToDo", old_name, "renamed-todo-should-not-exist")
+			self.assertTrue(frappe.db.exists("ToDo", old_name))
+			self.assertFalse(frappe.db.exists("ToDo", "renamed-todo-should-not-exist"))
+		finally:
+			if original is not None:
+				atomic_write_json(path, original)
+			elif os.path.exists(path):
+				os.remove(path)
+			clear_policy_cache()
 
 	def test_deny_does_not_apply_to_non_ephemeral_session(self):
 		# No grant file for the current (real) session -> policy must not
@@ -115,14 +158,15 @@ class TestPolicyEnforcement(FrappeTestCase):
 			original = read_json(path)
 		atomic_write_json(path, warn_policy)
 		clear_policy_cache()
+		log_path = _log_path_for("warn-jti-1")
 		try:
 			with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="ephemeral@example.com")):
 				todo = frappe.new_doc("ToDo")
 				todo.description = "warn-mode op"
 				todo.insert(ignore_permissions=True)
 				frappe.db.commit()  # trigger after_commit callbacks
+			self.addCleanup(lambda: frappe.delete_doc("ToDo", todo.name, force=True, ignore_permissions=True))
 
-			log_path = _log_path_for("warn-jti-1")
 			with open(log_path) as f:
 				lines = f.readlines()
 			self.assertTrue(any("event=create" in line and "doctype=ToDo" in line for line in lines))
@@ -132,6 +176,8 @@ class TestPolicyEnforcement(FrappeTestCase):
 			elif os.path.exists(path):
 				os.remove(path)
 			clear_policy_cache()
+			if os.path.exists(log_path):
+				os.remove(log_path)
 
 
 def _log_path_for(jti):

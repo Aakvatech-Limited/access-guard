@@ -59,7 +59,7 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		# (cmd=<the method just called>) -- nothing resets them between test
 		# methods outside a real request cycle, so a later direct-call test
 		# in another module that reads frappe.form_dict.get("cmd") (e.g.
-		# request_hooks._resolve_method_name) would otherwise see this
+		# request_hooks._resolve_path) would otherwise see this
 		# test's method name instead of its own.
 		self._orig_form_dict = getattr(frappe.local, "form_dict", None)
 		self._orig_request = getattr(frappe.local, "request", None)

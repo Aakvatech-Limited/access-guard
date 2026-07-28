@@ -54,12 +54,13 @@ def get_guard_conf() -> dict:
 
 
 def private_base_dir() -> str:
-	"""Absolute path to site/private/access_guard, creating it (and its
-	standard subdirectories) lazily if it doesn't exist yet."""
+	"""Absolute path to site/private/access_guard, creating it lazily if it
+	doesn't exist yet. Subdirectories are each created by their own accessor
+	(logs_dir, pushed_dir) - no need to pre-create both for every caller,
+	e.g. grants_path()/policy_path()/used_jti_path() have no subdir of their
+	own at all."""
 	base = frappe.get_site_path("private", PRIVATE_DIR)
 	os.makedirs(base, mode=0o700, exist_ok=True)
-	for sub in (LOGS_SUBDIR, PUSHED_SUBDIR):
-		os.makedirs(os.path.join(base, sub), mode=0o700, exist_ok=True)
 	return base
 
 
@@ -68,11 +69,15 @@ def grants_path() -> str:
 
 
 def logs_dir() -> str:
-	return os.path.join(private_base_dir(), LOGS_SUBDIR)
+	path = os.path.join(private_base_dir(), LOGS_SUBDIR)
+	os.makedirs(path, mode=0o700, exist_ok=True)
+	return path
 
 
 def pushed_dir() -> str:
-	return os.path.join(private_base_dir(), PUSHED_SUBDIR)
+	path = os.path.join(private_base_dir(), PUSHED_SUBDIR)
+	os.makedirs(path, mode=0o700, exist_ok=True)
+	return path
 
 
 def used_jti_path() -> str:
@@ -147,12 +152,8 @@ def read_json(path: str, default=None):
 
 
 def append_line(path: str, line: str) -> None:
-	"""Open-append-close a single line to a log file. Deliberately not
-	buffered/cached — traffic here is a human doing manual ops (low volume),
-	per DESIGN.md; a stray fd leak from a persistent logger is worse."""
+	"""Open-append-close a single line to a log file - opened and closed
+	fresh per call, no persistent handle held between writes."""
 	os.makedirs(os.path.dirname(path), exist_ok=True)
-	fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
-	try:
-		os.write(fd, (line if line.endswith("\n") else line + "\n").encode("utf-8"))
-	finally:
-		os.close(fd)
+	with open(path, "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as f:
+		f.write(line if line.endswith("\n") else line + "\n")

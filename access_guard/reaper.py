@@ -33,14 +33,26 @@ def _effective_expiry_seconds() -> int:
 
 
 def _live_sessions_for_user(user: str) -> list[dict]:
+	return _live_sessions_for_users([user])[user]
+
+
+def _live_sessions_for_users(users: list[str]) -> dict[str, list[dict]]:
+	"""One query for every user in `users`, grouped in Python - avoids the
+	N+1 a per-user query would cost when called from reap_idle_sessions over
+	every grant."""
+	by_user: dict[str, list[dict]] = {user: [] for user in users}
+	if not users:
+		return by_user
 	sessions = frappe.qb.DocType("Sessions")
 	rows = (
 		frappe.qb.from_(sessions)
-		.select(sessions.sid, sessions.lastupdate)
-		.where(sessions.user == user)
+		.select(sessions.user, sessions.sid, sessions.lastupdate)
+		.where(sessions.user.isin(users))
 		.run(as_dict=True)
 	)
-	return rows
+	for row in rows:
+		by_user[row["user"]].append(row)
+	return by_user
 
 
 def _is_idle_expired(lastupdate, expiry_seconds: int) -> bool:
@@ -59,13 +71,16 @@ def reap_idle_sessions() -> None:
 		return  # no idle-expiry configured - not "expire everything immediately"
 	grants = all_grants()
 
+	users = [record.get("user") for record in grants.values() if record.get("user")]
+	sessions_by_user = _live_sessions_for_users(users)
+
 	for jti, record in grants.items():
 		user = record.get("user")
 		sid = record.get("sid")
 		if not user:
 			continue
 
-		live_sessions = _live_sessions_for_user(user)
+		live_sessions = sessions_by_user[user]
 		live_sids = {row["sid"] for row in live_sessions}
 
 		for row in live_sessions:
@@ -86,14 +101,19 @@ def reap_disabled_and_blacklisted() -> None:
 	next idle-expiry tick. Unlike reap_idle_sessions, ignores idle state
 	entirely: a matching grant is reaped regardless of its last activity."""
 	policy = get_policy()
-	blacklist = set(policy.get(POLICY_BLACKLISTED_EMAILS) or [])
+	# Hub unions two distinct causes (explicit admin blacklist row, or the
+	# hub-side User simply being disabled) into this one flat email list
+	# (access_hub_settings.as_policy_dict) - can't tell which applied here,
+	# so the reason logged below is deliberately neutral rather than
+	# claiming "blacklisted" for what might just be an inactive user.
+	denylisted = set(policy.get(POLICY_BLACKLISTED_EMAILS) or [])
 	disabled = bool(policy.get(POLICY_ACCESS_DISABLED))
-	if not disabled and not blacklist:
+	if not disabled and not denylisted:
 		return
 
 	for jti, record in all_grants().items():
-		if disabled or record.get("user_email") in blacklist:
-			_reap_now(jti, record, reason="access_disabled" if disabled else "blacklisted")
+		if disabled or record.get("user_email") in denylisted:
+			_reap_now(jti, record, reason="access_disabled" if disabled else "policy_denied")
 
 
 def _reap_now(jti: str, record: dict, *, reason: str) -> None:

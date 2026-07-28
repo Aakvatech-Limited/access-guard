@@ -103,7 +103,7 @@ def match_rule(doctype: str, action: str) -> dict | None:
 	return None
 
 
-def enforce(doctype: str, action: str) -> str | None:
+def get_enforce_mode(doctype: str, action: str) -> str | None:
 	"""Returns the matching rule's mode (MODE_DENY, MODE_WARN) or None (no
 	rule -> allow). The caller decides what to do with MODE_DENY - this
 	just answers the policy question, it doesn't raise."""

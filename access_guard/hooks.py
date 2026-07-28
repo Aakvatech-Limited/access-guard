@@ -26,6 +26,7 @@ doc_events = {
 		"on_trash": [
 			"access_guard.session_guard.on_trash",
 		],
+		"before_rename": "access_guard.session_guard.before_rename",
 	}
 }
 
@@ -40,5 +41,4 @@ scheduler_events = {
 	],
 }
 
-before_request = ["access_guard.request_hooks.before_request"]
 after_request = ["access_guard.request_hooks.after_request"]

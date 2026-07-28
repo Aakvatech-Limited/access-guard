@@ -7,7 +7,6 @@ receive_policy  allow_guest=True   best-effort policy push from the hub
 import frappe
 
 from access_guard.config_utils import get_guard_conf
-from access_guard.errors import ingest_api
 from access_guard.grants import mark_jti_used, write_grant
 from access_guard.logging_ import log_session_event
 from access_guard.policy import get_policy, store_verified_policy
@@ -18,23 +17,64 @@ from access_guard.protocol import (
 	CLAIM_USER_LAST_NAME,
 	CLAIM_USER_MIDDLE_NAME,
 	POLICY_NAME_SUFFIX,
-	POLICY_SESSION_EXPIRY_SECONDS,
+	AccessProtocolError,
 	EphemeralUserCollisionError,
 	TokenAudienceError,
 	TokenMalformedError,
 	transport_token_hash,
 )
+from access_guard.tokens import verify_hub_token
 
 
-@ingest_api
+def _respond_with_error(exc: AccessProtocolError) -> None:
+	frappe.local.response["http_status_code"] = exc.http_status
+	frappe.local.response.update(exc.as_response())
+	# Whitelisted method handlers can `return` after calling this; nothing
+	# else should be set on frappe.local.response for this request.
+
+
+def _ingest_api(fn):
+	"""Drop-in replacement for `@frappe.whitelist(allow_guest=True)` on every
+	hub-signed access_guard endpoint (PROTOCOL.md §5: accept, receive_policy,
+	and any future one). Mirrors access_hub.api.ingest_endpoint: verifies the
+	incoming `token` itself (steps 1-4 of PROTOCOL.md §3 — parse, signature,
+	pv, exp) via verify_hub_token, then calls the handler with the decoded
+	claims dict rather than the raw token — handlers never re-verify. Any
+	AccessProtocolError raised anywhere in the call — token verification, the
+	handler itself — is caught exactly once and turned into the standard
+	error response, instead of every handler repeating its own try/except.
+
+	The wire field is always named `token` — both endpoints use this same
+	name (receive_policy included; the hub posts {"token": ...} to it, not
+	{"policy_token": ...}) so there's exactly one call convention, not one
+	per endpoint.
+
+	Handlers should take `claims` as their only argument, `raise` the
+	appropriate AccessProtocolError subclass for any further (endpoint-
+	specific) verification, and return their normal success value.
+	"""
+
+	@frappe.whitelist(allow_guest=True)
+	def wrapper(token: str | None = None):
+		try:
+			claims = verify_hub_token(token)
+			return fn(claims)
+		except AccessProtocolError as e:
+			_respond_with_error(e)
+			return None
+
+	return wrapper
+
+
+@_ingest_api
 def accept(claims: dict):
-	"""Grant acceptance endpoint. ingest_api has already done PROTOCOL.md §3
+	"""Grant acceptance endpoint. _ingest_api has already done PROTOCOL.md §3
 	steps 1-4 (parse, signature, pv, exp); this does the remaining
 	grant-specific steps 5-6 (aud, jti-replay), then provisions the
 	ephemeral user + session and redirects into desk.
 
 	Any AccessProtocolError raised here is turned into the standard error
-	response by the @ingest_api decorator — just raise and return.
+	response by the @_ingest_api decorator — just raise and return.
 	"""
 	# aud == transport_token_hash(local token)
 	expected_aud = transport_token_hash(frappe.conf["access_guard_transport_token"])
@@ -86,7 +126,6 @@ def accept(claims: dict):
 			"user": user,
 			"sid": sid,
 			"issued_at": issued_at,
-			"effective_expiry_seconds": int(policy.get(POLICY_SESSION_EXPIRY_SECONDS) or 0),
 		},
 	)
 	log_session_event(jti, "login")
@@ -174,11 +213,11 @@ def _start_session(user: str) -> None:
 	frappe.db.commit()
 
 
-@ingest_api
+@_ingest_api
 def receive_policy(claims: dict):
 	"""Best-effort policy push from the hub. Authenticated entirely by the
 	policy token's own signature (PROTOCOL.md §4, already verified by
-	ingest_api) — no transport token needed, since anyone who could forge
+	_ingest_api) — no transport token needed, since anyone who could forge
 	this token could forge anything.
 	"""
 	from access_guard.reaper import reap_disabled_and_blacklisted

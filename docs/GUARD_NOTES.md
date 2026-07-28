@@ -68,19 +68,28 @@ The ephemeral user holds all roles (System Manager), so DB permissions gate noth
 Enforcement keys entirely off `find_grant_by_sid(frappe.session.sid)` — "is this sid in a
 grant file?". Everything that enforces or logs uses that same test:
 
-- `session_guard` on `doc_events["*"]` (`validate` → create/write, `before_submit`,
-  `before_cancel`, `on_trash`): `deny` → `frappe.throw(PolicyDeniedError)` before write;
-  `warn` → interstitial `msgprint` + an `after_commit` doc-log.
-- `always_log.on_update`/`on_trash`: diff-log listed doctypes via `after_commit` (no
-  commit → no log; size-exempt). Second channel — catches a sensitive write even if it rode
-  a safe HTTP verb the request stream skipped.
-- `request_hooks` before/after_request: log every whitelisted call; skip safe HTTP verbs
+- `session_guard` on `doc_events["*"]` (`before_validate` → create/write/submit,
+  `before_cancel`, `on_trash`, `before_rename` — no separate `after_rename`,
+  the {old_name, new_name} payload is fully known before the rename even
+  happens): `deny` →
+  `frappe.throw(PolicyDeniedError)` before write, logged immediately (nothing
+  commits on a deny); `warn` → interstitial `msgprint` + an `after_commit`
+  doc-log. Always-log doctypes are decided in the same pass (one log line
+  either way, never both) and now cover submit/cancel/rename too, not just
+  write/delete. `write`/`submit` log a diff (`Version.get_diff` against the
+  pre-save state, computed lazily at commit time so it reflects doc's final
+  state); everything else logs the full doc (or `{old_name, new_name}` for
+  rename).
+- `request_hooks.after_request`: log every whitelisted call; skip safe HTTP verbs
   (GET/HEAD/OPTIONS) unless `policy.log_reads` — the verb, not an endpoint denylist, is the
-  version-proof mutation signal.
+  version-proof mutation signal. No `before_request` hook — everything's read fresh
+  from `frappe.request`/`frappe.session` in `after_request` itself. Params come
+  straight from the request object (query args + form + parsed JSON body when
+  `request.is_json`), never `frappe.form_dict` (mutable, handler-writable).
 - `boot.boot_session`: stamps `bootinfo.access_guard_ephemeral` + a `md5(sid)` login hash
   for the static monitoring bar (`app_include_js`; notice text is not hub-configurable in v1).
 
-`enforce()`/policy always read the file, never the DB.
+`get_enforce_mode()`/policy always read the file, never the DB.
 
 ## Reaper ordering gotcha
 
@@ -97,8 +106,8 @@ client user is never deletable, and reuse of an existing email is refused for th
 - Self-contained, **no running hub**: mint a throwaway PASETO keypair in the test
   (`tests/keys.py`) and sign tokens locally with `pyseto`. `pip install pyseto` first.
 - `FrappeTestCase`; tests under `access_guard/access_guard/tests/`.
-- To exercise `before_request`/`after_request`, give the test a real request with
+- To exercise `after_request`, give the test a real request with
   `frappe.utils.set_request(method=..., path="/api/method/<name>")` (or set
-  `frappe.form_dict["cmd"]`) — `_resolve_method_name()` reads `frappe.request.path` /
+  `frappe.form_dict["cmd"]`) — `_resolve_path()` reads `frappe.request.path` /
   `form_dict["cmd"]`, so a mock won't do.
 - Run: `bench --site <guard-site> run-tests --app access_guard` (developer mode, app installed).

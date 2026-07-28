@@ -38,7 +38,7 @@ TEST_POLICY_DEFAULTS = {
 	POLICY_RULES: [{"doctype": "User", "actions": ["create", "write", "delete"], "mode": MODE_DENY}],
 	POLICY_SESSION_EXPIRY_SECONDS: 6 * 60 * 60,
 	POLICY_ALWAYS_LOG_DOCTYPES: ["User", "Server Script", "Scheduled Job Type"],
-	POLICY_MAX_KEY_SIZE_BYTES: 512 * 1024,
+	POLICY_MAX_KEY_SIZE_BYTES: 256 * 1024,
 	POLICY_LOG_READS: False,
 	POLICY_LOG_SYNC_ENABLED: True,
 	POLICY_RETENTION_DAYS: 365,

@@ -70,7 +70,6 @@ class TestReaper(FrappeTestCase):
 				"user": user,
 				"sid": sid,
 				"issued_at": frappe.utils.now_datetime().isoformat(),
-				"effective_expiry_seconds": 3600,  # 1h — old_time (10h ago) is well past this
 			},
 		)
 
@@ -138,7 +137,6 @@ class TestReaper(FrappeTestCase):
 				"user": user,
 				"sid": sid,
 				"issued_at": frappe.utils.now_datetime().isoformat(),
-				"effective_expiry_seconds": 3600,
 			},
 		)
 		return user
