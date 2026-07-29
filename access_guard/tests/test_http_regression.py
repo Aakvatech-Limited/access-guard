@@ -163,7 +163,7 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 		# AccessProtocolError JSON response, which is what this must get.
 		self.assertEqual(resp.status_code, 400)
 		payload = json.loads(resp.get_data(as_text=True))
-		self.assertEqual(payload.get("error", {}).get("code"), "token_malformed")
+		self.assertEqual(payload.get("message", {}).get("error", {}).get("code"), "token_malformed")
 
 	def test_receive_policy_valid_token_over_http(self):
 		# receive_policy() overwrites the shared on-disk policy.json for real
@@ -218,4 +218,4 @@ class TestGuestEndpointsOverRealHttp(FrappeTestCase):
 
 		self.assertEqual(resp.status_code, 401)
 		payload = json.loads(resp.get_data(as_text=True))
-		self.assertEqual(payload.get("error", {}).get("code"), "token_bad_signature")
+		self.assertEqual(payload.get("message", {}).get("error", {}).get("code"), "token_bad_signature")

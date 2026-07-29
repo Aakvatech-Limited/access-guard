@@ -116,7 +116,10 @@ def transport_token_hash(token: str) -> str:
 # Error taxonomy
 class AccessProtocolError(Exception):
 	code = "access_protocol_error"
-	http_status = 400
+	# Named to match what frappe's app.py reads off a raised exception, so an
+	# error that escapes an api.py decorator (e.g. PolicyDeniedError from the
+	# doc hooks) still gets its intended status instead of a blanket 500.
+	http_status_code = 400
 
 	def __init__(self, message: str | None = None):
 		super().__init__(message or self.code)
@@ -128,54 +131,54 @@ class AccessProtocolError(Exception):
 
 class ClientNotConfiguredError(AccessProtocolError):
 	code = "client_not_configured"
-	http_status = 503
+	http_status_code = 503
 
 
 class TokenMalformedError(AccessProtocolError):
 	code = "token_malformed"
-	http_status = 400
+	http_status_code = 400
 
 
 class TokenSignatureError(AccessProtocolError):
 	code = "token_bad_signature"
-	http_status = 401
+	http_status_code = 401
 
 
 class TokenExpiredError(AccessProtocolError):
 	code = "token_expired"
-	http_status = 401
+	http_status_code = 401
 
 
 class TokenAudienceError(AccessProtocolError):
 	code = "token_wrong_audience"
-	http_status = 403
+	http_status_code = 403
 
 
 class TokenReplayError(AccessProtocolError):
 	code = "token_replayed"
-	http_status = 409
+	http_status_code = 409
 
 
 class ProtocolVersionError(AccessProtocolError):
 	code = "protocol_version_mismatch"
-	http_status = 426  # Upgrade Required
+	http_status_code = 426  # Upgrade Required
 
 
 class TransportAuthError(AccessProtocolError):
 	code = "transport_auth_failed"
-	http_status = 401
+	http_status_code = 401
 
 
 class PolicyDeniedError(AccessProtocolError):
 	code = "policy_denied"
-	http_status = 403
+	http_status_code = 403
 
 
 class PolicyUnavailableError(AccessProtocolError):
 	# No policy has ever been received AND a synchronous pull also failed -
 	# the guard must never fall back to any default policy; there is none.
 	code = "policy_unavailable"
-	http_status = 503
+	http_status_code = 503
 
 
 class EphemeralUserCollisionError(AccessProtocolError):
@@ -183,7 +186,7 @@ class EphemeralUserCollisionError(AccessProtocolError):
 	# on the target site. Never log that user in — the whole point is to avoid
 	# handing out standing accounts. The guard refuses; no session is started.
 	code = "ephemeral_user_collision"
-	http_status = 409
+	http_status_code = 409
 
 
 def check_pv(value) -> None:

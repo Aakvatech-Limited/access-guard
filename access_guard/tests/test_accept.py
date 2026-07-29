@@ -135,10 +135,10 @@ class TestAccept(FrappeTestCase):
 		self._created_users.append("replay@example.com")
 
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(token)
+			result = self._call_accept(token)
 
-		self.assertEqual(frappe.local.response.get("error", {}).get("code"), TokenReplayError.code)
-		self.assertEqual(frappe.local.response.get("http_status_code"), TokenReplayError.http_status)
+		self.assertEqual(result.get("error", {}).get("code"), TokenReplayError.code)
+		self.assertEqual(frappe.local.response.get("http_status_code"), TokenReplayError.http_status_code)
 
 	def test_replay_survives_with_used_jti_file_only(self):
 		"""Replay protection must hold even if we simulate the used-jti
@@ -160,44 +160,44 @@ class TestAccept(FrappeTestCase):
 			frappe.db.commit()
 
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(token)
+			result = self._call_accept(token)
 
-		self.assertEqual(frappe.local.response.get("error", {}).get("code"), TokenReplayError.code)
+		self.assertEqual(result.get("error", {}).get("code"), TokenReplayError.code)
 
 	def test_expired_token_rejected(self):
 		token = self.keypair.mint_grant_token(
 			user_email="expired@example.com", ttl_seconds=1, issued_delta_seconds=-3600
 		)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(token)
+			result = self._call_accept(token)
 
-		self.assertEqual(frappe.local.response.get("error", {}).get("code"), TokenExpiredError.code)
+		self.assertEqual(result.get("error", {}).get("code"), TokenExpiredError.code)
 		self.assertFalse(frappe.db.exists("User", "expired@example.com"))
 
 	def test_tampered_token_rejected(self):
 		token = self.keypair.mint_grant_token(user_email="tampered@example.com")
 		tampered = self.keypair.tamper(token)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(tampered)
+			result = self._call_accept(tampered)
 
-		self.assertEqual(frappe.local.response.get("error", {}).get("code"), TokenSignatureError.code)
+		self.assertEqual(result.get("error", {}).get("code"), TokenSignatureError.code)
 
 	def test_wrong_audience_rejected(self):
 		token = self.keypair.mint_grant_token(
 			user_email="wrongaud@example.com", transport_token="a-different-transport-token"
 		)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(token)
+			result = self._call_accept(token)
 
-		self.assertEqual(frappe.local.response.get("error", {}).get("code"), TokenAudienceError.code)
+		self.assertEqual(result.get("error", {}).get("code"), TokenAudienceError.code)
 		self.assertFalse(frappe.db.exists("User", "wrongaud@example.com"))
 
 	def test_pv_mismatch_rejected(self):
 		token = self.keypair.mint_grant_token(user_email="badpv@example.com", pv=2)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(token)
+			result = self._call_accept(token)
 
-		self.assertEqual(frappe.local.response.get("error", {}).get("code"), ProtocolVersionError.code)
+		self.assertEqual(result.get("error", {}).get("code"), ProtocolVersionError.code)
 
 	def test_standing_user_collision_rejected(self):
 		"""A grant for an email that already belongs to a NON-ephemeral user
@@ -213,15 +213,15 @@ class TestAccept(FrappeTestCase):
 
 		token = self.keypair.mint_grant_token(user_email=email, transport_token=TRANSPORT_TOKEN)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(token)
+			result = self._call_accept(token)
 
 		self.assertEqual(
-			frappe.local.response.get("error", {}).get("code"),
+			result.get("error", {}).get("code"),
 			EphemeralUserCollisionError.code,
 		)
 		self.assertEqual(
 			frappe.local.response.get("http_status_code"),
-			EphemeralUserCollisionError.http_status,
+			EphemeralUserCollisionError.http_status_code,
 		)
 		# no grant file was written for this jti
 		claims = _decode_claims_for_test(token)
@@ -240,9 +240,10 @@ class TestAccept(FrappeTestCase):
 		# A different grant (new jti) for the same, now-ephemeral, email.
 		second = self.keypair.mint_grant_token(user_email=email, transport_token=TRANSPORT_TOKEN)
 		with patch.dict(frappe.conf, _conf(self.keypair)):
-			self._call_accept(second)
+			result = self._call_accept(second)
 
-		self.assertIsNone(frappe.local.response.get("error"))
+		# No error dict returned; the success path redirects instead.
+		self.assertIsNone(result)
 		self.assertEqual(frappe.local.response.get("type"), "redirect")
 		from access_guard.grants import delete_grant
 
@@ -259,9 +260,9 @@ class TestAccept(FrappeTestCase):
 				"access_guard_transport_token",
 			):
 				frappe.conf.pop(key, None)
-			self._call_accept(token)
+			result = self._call_accept(token)
 
-		self.assertEqual(frappe.local.response.get("error", {}).get("code"), ClientNotConfiguredError.code)
+		self.assertEqual(result.get("error", {}).get("code"), ClientNotConfiguredError.code)
 
 
 def _decode_claims_for_test(token: str) -> dict:

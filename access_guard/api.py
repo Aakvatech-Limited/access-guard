@@ -28,13 +28,6 @@ from access_guard.protocol import (
 from access_guard.tokens import verify_hub_token
 
 
-def _respond_with_error(exc: AccessProtocolError) -> None:
-	frappe.local.response["http_status_code"] = exc.http_status
-	frappe.local.response.update(exc.as_response())
-	# Whitelisted method handlers can `return` after calling this; nothing
-	# else should be set on frappe.local.response for this request.
-
-
 def _ingest_api(fn):
 	"""Drop-in replacement for `@frappe.whitelist(allow_guest=True)` on every
 	hub-signed access_guard endpoint (PROTOCOL.md §5: accept, receive_policy,
@@ -62,8 +55,8 @@ def _ingest_api(fn):
 			claims = verify_hub_token(token)
 			return fn(claims)
 		except AccessProtocolError as e:
-			_respond_with_error(e)
-			return None
+			frappe.local.response["http_status_code"] = e.http_status_code
+			return e.as_response()
 
 	return wrapper
 

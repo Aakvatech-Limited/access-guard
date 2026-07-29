@@ -17,8 +17,9 @@ which must stay byte-identical to the hub's copy — coordinate any change.
 - Whitelisted endpoints live in `api.py` → called as `access_guard.api.<fn>`.
 - **Guest endpoints use `@_ingest_api` (`api.py`), never raw
   `@frappe.whitelist(allow_guest=True)`.** It whitelists internally *and* catches
-  any `AccessProtocolError` once, turning it into the PROTOCOL §5 `{"error": {...}}`
-  response with the class's `http_status`. Handlers just `raise` the right subclass
+  any `AccessProtocolError` once, returning it as the PROTOCOL §5 `{"error": {...}}`
+  body (under Frappe's `message` envelope on the wire) with the class's
+  `http_status_code`. Handlers just `raise` the right subclass
   and return their success value — no per-handler try/except. Applies to `accept`,
   `receive_policy`, and any new guest endpoint.
 - Integrity-critical writes are **atomic** (temp file + `fsync` + `os.rename`) under a
