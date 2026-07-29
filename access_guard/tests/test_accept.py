@@ -82,16 +82,18 @@ class TestAccept(FrappeTestCase):
 		frappe.db.commit()
 
 	def _call_accept(self, token):
-		# accept() performs a real programmatic login (LoginManager), which
-		# needs frappe.local.request to exist (it reads request.path) --
-		# set up a throwaway GET request context like the real endpoint
-		# would have.
-		from frappe.auth import CookieManager
+		# accept() performs a real programmatic login via
+		# frappe.local.login_manager, which only exists inside a real HTTP
+		# request (HTTPRequest.set_session instantiates it, and LoginManager
+		# reads request.path) -- set up a throwaway GET request context like
+		# the real endpoint would have.
+		from frappe.auth import CookieManager, LoginManager
 
 		from access_guard.api import accept
 
 		frappe.utils.set_request(method="GET", path="/api/method/access_guard.api.accept")
 		frappe.local.cookie_manager = CookieManager()
+		frappe.local.login_manager = LoginManager()
 		# Each real HTTP request gets a fresh response; mirror that so a prior
 		# call's error/redirect can't leak into this one's assertions.
 		frappe.local.response = frappe._dict()

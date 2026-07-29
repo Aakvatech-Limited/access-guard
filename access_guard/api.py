@@ -120,6 +120,8 @@ def accept(claims: dict):
 	# Written after login, sid already known - see session_guard.py for the
 	# narrow gap this leaves during post_login() itself.
 	_start_session(user)
+	frappe.db.commit()
+
 	sid = frappe.session.sid
 
 	issued_at = utc_iso()  # grant file, not a DocType -> UTC
@@ -214,7 +216,6 @@ def _create_or_reuse_ephemeral_user(
 	from frappe.core.doctype.user.user import get_all_roles
 
 	user_doc.add_roles(*get_all_roles())
-	frappe.db.commit()
 	return user_doc.name
 
 
@@ -222,19 +223,9 @@ def _start_session(user: str) -> None:
 	"""Programmatic login, following the pattern used by
 	frappe/integrations/doctype/ldap_settings for a verified-out-of-band
 	identity: assign login_manager.user directly and run post_login().
-
-	frappe.local.login_manager only exists inside a real HTTP request
-	(HTTPRequest.set_session instantiates it); under bench console/tests
-	there is no request, so create one on demand rather than assuming it's
-	always present.
 	"""
-	if not getattr(frappe.local, "login_manager", None):
-		from frappe.auth import LoginManager
-
-		frappe.local.login_manager = LoginManager()
 	frappe.local.login_manager.user = user
 	frappe.local.login_manager.post_login()
-	frappe.db.commit()
 
 
 @_ingest_api
