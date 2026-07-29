@@ -120,11 +120,12 @@ def accept(claims: dict):
 	# Written after login, sid already known - see session_guard.py for the
 	# narrow gap this leaves during post_login() itself.
 	_start_session(user)
-	frappe.db.commit()
-
 	sid = frappe.session.sid
 
 	issued_at = utc_iso()  # grant file, not a DocType -> UTC
+	# Grant file before the commit: an orphan grant file is harmless (the reaper
+	# collects it), a committed session with no grant file is unenforceable by
+	# session_guard and invisible to the reaper.
 	write_grant(
 		jti,
 		{
@@ -137,6 +138,9 @@ def accept(claims: dict):
 			"issued_at": issued_at,
 		},
 	)
+	# Explicit: accept() is a GET (redirectable link), and sync_database() only
+	# commits on unsafe verbs - the user row and session would be rolled back.
+	frappe.db.commit()
 	log_session_event(jti, "login")
 
 	# Land where Frappe's own post-login would for a system user: the
