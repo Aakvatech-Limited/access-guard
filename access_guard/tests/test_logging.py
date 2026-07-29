@@ -15,6 +15,7 @@ from access_guard.config_utils import atomic_write_json, policy_path, read_json
 from access_guard.grants import delete_grant, write_grant
 from access_guard.logging_ import _TRUNCATED_MARKER, log_file_path
 from access_guard.protocol import utc_iso
+from access_guard.tests.keys import isolate_policy_from_hub
 
 
 def _write_fake_grant(jti: str, sid: str, user: str = "logtest@example.com"):
@@ -56,7 +57,14 @@ def _parse_logfmt(line: str) -> dict:
 
 class TestLogging(FrappeTestCase):
 	def setUp(self):
+		isolate_policy_from_hub(self)
 		self._jtis = []
+		# ToDos created here are committed (the doc-event tests need a real
+		# commit), so FrappeTestCase's rollback can't undo them. A row surviving a
+		# failed assertion would be picked up by the next run's always-log policy
+		# and break it in turn, so sweep by doctype rather than trusting each
+		# test's own cleanup to have run.
+		self._todos_before = set(frappe.get_all("ToDo", pluck="name"))
 		self.addCleanup(self._cleanup)
 
 	def _cleanup(self):
@@ -67,18 +75,29 @@ class TestLogging(FrappeTestCase):
 				if os.path.exists(path):
 					os.remove(path)
 
+		for name in set(frappe.get_all("ToDo", pluck="name")) - self._todos_before:
+			frappe.delete_doc("ToDo", name, force=True, ignore_permissions=True)
+		frappe.db.commit()
+
 	def _fake_session(self, jti):
+		"""Note: `jti` is suffixed with the test method name. These write real files
+		into a shared logs dir, so a fixed name lets a leftover file from a crashed
+		run (or another test) be read as this test's output."""
+		jti = self._jti(jti)
 		sid = f"log-sid-{jti}"
 		_write_fake_grant(jti, sid)
 		self._jtis.append(jti)
 		return sid
+
+	def _jti(self, jti):
+		return f"{jti}-{self._testMethodName}"
 
 	def _stub_policy(self, policy):
 		"""Write `policy` to the policy file for this test only, restoring
 		whatever was there on cleanup. Tests that assert on a policy-driven
 		branch must set that policy - otherwise they silently inherit the
 		live one from disk/redis and pass or fail on the hub's current config."""
-		from access_guard.tests.keys import clear_policy_cache, stub_policy_file
+		from access_guard.tests.keys import clear_policy_cache, isolate_policy_from_hub, stub_policy_file
 
 		path = policy_path()
 		original = read_json(path) if os.path.exists(path) else None
@@ -94,7 +113,7 @@ class TestLogging(FrappeTestCase):
 		stub_policy_file(policy)
 
 	def _read_lines(self, jti, kind="request"):
-		path = log_file_path(jti, kind)
+		path = log_file_path(self._jti(jti), kind)
 		if not os.path.exists(path):
 			return []
 		with open(path) as f:
@@ -220,7 +239,7 @@ class TestLogging(FrappeTestCase):
 
 		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
 			log_request(
-				jti,
+				self._jti(jti),
 				"some.whitelisted.method",
 				"GET",
 				"ok",
@@ -402,6 +421,13 @@ class TestLogging(FrappeTestCase):
 		self.assertEqual(lines[0]["event"], "denied:write")
 		self.assertEqual(lines[0]["doctype"], "User")
 
+	@staticmethod
+	def _delete_todos(*names):
+		for name in names:
+			if frappe.db.exists("ToDo", name):
+				frappe.delete_doc("ToDo", name, force=True, ignore_permissions=True)
+		frappe.db.commit()
+
 	def test_always_log_rename_logs_old_and_new_name(self):
 		jti = "log-jti-rename"
 		sid = self._fake_session(jti)
@@ -413,7 +439,11 @@ class TestLogging(FrappeTestCase):
 		frappe.db.commit()
 		old_name = todo.name
 		new_name = f"{old_name}-renamed"
-		self.addCleanup(lambda: frappe.delete_doc("ToDo", new_name, force=True, ignore_permissions=True))
+		# Both names: if the rename or an assertion below fails, the row is still
+		# under old_name, and deleting only new_name would leave it behind
+		# committed - where the next run's always-log policy picks it up and
+		# breaks this test again.
+		self.addCleanup(self._delete_todos, old_name, new_name)
 
 		from frappe.model.rename_doc import rename_doc
 
@@ -451,7 +481,7 @@ class TestLogging(FrappeTestCase):
 
 		with patch.object(frappe.local, "session", frappe._dict(sid=sid, user="logtest@example.com")):
 			log_request(
-				jti,
+				self._jti(jti),
 				"some.whitelisted.method",
 				"GET",
 				"ok",

@@ -9,6 +9,7 @@ from frappe.tests.utils import FrappeTestCase
 
 from access_guard.grants import write_grant
 from access_guard.protocol import PolicyDeniedError, utc_iso
+from access_guard.tests.keys import isolate_policy_from_hub
 
 
 def _write_fake_grant(jti: str, sid: str, user: str):
@@ -28,6 +29,7 @@ def _write_fake_grant(jti: str, sid: str, user: str):
 
 class TestPolicyEnforcement(FrappeTestCase):
 	def setUp(self):
+		isolate_policy_from_hub(self)
 		self._grant_jtis = []
 		self.addCleanup(self._cleanup)
 
@@ -87,7 +89,7 @@ class TestPolicyEnforcement(FrappeTestCase):
 		import os
 
 		from access_guard.config_utils import atomic_write_json, policy_path, read_json
-		from access_guard.tests.keys import clear_policy_cache
+		from access_guard.tests.keys import clear_policy_cache, isolate_policy_from_hub
 
 		sid = self._fake_ephemeral_session("deny-rename-jti")
 

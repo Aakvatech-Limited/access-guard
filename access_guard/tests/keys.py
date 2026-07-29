@@ -3,8 +3,10 @@ the guard's tests never depend on a running hub (BUILD_PLAN.md "Tests").
 """
 
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import frappe
 import pyseto
@@ -69,6 +71,29 @@ def stub_policy_file(policy: dict, verified_at: str | None = None) -> None:
 
 def clear_policy_cache() -> None:
 	frappe.cache.delete_value(POLICY_CACHE_KEY)
+
+
+def isolate_policy_from_hub(test_case) -> None:
+	"""Stop get_policy() reaching a real hub for the rest of `test_case`.
+
+	The policy cache key is shared across every process on the bench, and
+	frappe.clear_cache() (fired by any rename or add_roles) deletes it mid-test. On
+	the next miss get_policy() falls back to pull_policy() - and if `bench start` is
+	up, guard.localhost's hub_url is live, so it fetches the REAL policy and SETEXes
+	it into that shared key. The stub is gone and assertions see production rules.
+
+	With the fallback dead a miss re-reads the file instead, which is deterministic.
+	Tests that don't stub a policy of their own therefore need one on disk, so seed
+	the defaults when the file is absent - otherwise get_policy() has nothing left to
+	fall back to and raises PolicyUnavailableError. Call from setUp before stubbing."""
+	patcher = patch("access_guard.policy.pull_policy", return_value=None)
+	patcher.start()
+	test_case.addCleanup(patcher.stop)
+
+	# Unconditionally, not only when absent: TestSyncHourly deliberately runs with
+	# no policy file and restores that state, so a later module can find it gone.
+	# Each test starts from a known policy regardless of what ran before.
+	stub_policy_file(dict(TEST_POLICY_DEFAULTS))
 
 
 class TestKeypair:

@@ -12,10 +12,12 @@ from access_guard.config_utils import atomic_write_json, policy_path, read_json
 from access_guard.grants import delete_grant, read_grant, write_grant
 from access_guard.protocol import utc_iso
 from access_guard.reaper import reap_disabled_and_blacklisted, reap_idle_sessions
+from access_guard.tests.keys import isolate_policy_from_hub
 
 
 class TestReaper(FrappeTestCase):
 	def setUp(self):
+		isolate_policy_from_hub(self)
 		self._users_to_clean = []
 		self._jtis_to_clean = []
 		self._sids_to_clean = []
@@ -122,7 +124,7 @@ class TestReaper(FrappeTestCase):
 		this twice in one test used to snapshot the first stub as the second's
 		"original", so a restore could write a stub back over the site's real
 		policy file and leak into later tests."""
-		from access_guard.tests.keys import clear_policy_cache
+		from access_guard.tests.keys import clear_policy_cache, isolate_policy_from_hub
 
 		path = policy_path()
 		if not hasattr(self, "_policy_restored"):

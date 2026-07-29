@@ -7,8 +7,8 @@ from unittest.mock import patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from access_guard.config_utils import logs_dir, policy_path
-from access_guard.protocol import MAX_PUSH_BYTES
+from access_guard.config_utils import atomic_write_json, logs_dir, policy_path, read_json
+from access_guard.protocol import MAX_PUSH_BYTES, PolicyUnavailableError
 from access_guard.sync import _push_all_logs, _pushed_bytes, _pushed_meta_path, _split_chunks, sync_hourly
 from access_guard.tests.keys import TestKeypair, clear_policy_cache
 
@@ -16,12 +16,24 @@ from access_guard.tests.keys import TestKeypair, clear_policy_cache
 class TestSyncHourly(FrappeTestCase):
 	def setUp(self):
 		self.keypair = TestKeypair()
+		# These tests need "no policy on disk" as a starting point, but the file is
+		# shared state: other modules' tests read whatever policy is there rather
+		# than stubbing their own, so deleting it without putting it back made them
+		# fail depending on module order. Stash and restore.
+		self._original_policy = read_json(policy_path()) if os.path.exists(policy_path()) else None
+		self.addCleanup(self._restore_policy_file)
 		self._remove_policy_file()
-		self.addCleanup(self._remove_policy_file)
 
 	def _remove_policy_file(self):
 		if os.path.exists(policy_path()):
 			os.remove(policy_path())
+		clear_policy_cache()
+
+	def _restore_policy_file(self):
+		if self._original_policy is None:
+			self._remove_policy_file()
+			return
+		atomic_write_json(policy_path(), self._original_policy)
 		clear_policy_cache()
 
 	def test_policy_pull_and_reap_run_even_when_log_sync_disabled(self):
@@ -60,22 +72,23 @@ class TestSyncHourly(FrappeTestCase):
 		mock_push.assert_called_once()
 		mock_retention.assert_called_once()
 
-	def test_no_policy_available_still_runs_log_sync_by_default(self):
-		"""No policy ever pulled and none cached -> get_policy() would raise
-		PolicyUnavailableError, but this test's guard.localhost site_config
-		points at a real hub.localhost, so pull_policy() actually succeeds
-		against it - not a fully isolated unit test."""
+	def test_no_policy_available_aborts_the_sync(self):
+		"""Nothing pulled, nothing cached, nothing on disk: get_policy() raises, so
+		sync_hourly() cannot decide whether log sync is even enabled and does none of
+		it. Previously this asserted the opposite and only passed because a live hub
+		answered pull_policy() - the scenario was never actually exercised."""
 		with (
 			patch("access_guard.sync.pull_policy", return_value=None),
 			patch("access_guard.sync.reap_disabled_and_blacklisted") as mock_reap,
 			patch("access_guard.sync._push_all_logs") as mock_push,
 			patch("access_guard.sync._enforce_retention") as mock_retention,
+			self.assertRaises(PolicyUnavailableError),
 		):
 			sync_hourly()
 
 		mock_reap.assert_not_called()  # no token pulled -> nothing (re)verified
-		mock_push.assert_called_once()
-		mock_retention.assert_called_once()
+		mock_push.assert_not_called()
+		mock_retention.assert_not_called()
 
 
 class TestPushAllLogsIsIncremental(FrappeTestCase):
