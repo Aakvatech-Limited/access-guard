@@ -114,8 +114,12 @@ def _enforce_for_doc(doc, action: str, *, old_name=None, new_name=None, payload=
 		name = new_name if new_name is not None else doc.name
 
 		def _log():
-			doc_snapshot, diff = payload()
-			log_doc_event(jti, doc.doctype, name, action, doc=doc_snapshot, diff=diff)
+			# An audit line that can't be written is an Error Log row, not a failed request.
+			try:
+				doc_snapshot, diff = payload()
+				log_doc_event(jti, doc.doctype, name, action, doc=doc_snapshot, diff=diff)
+			except Exception:
+				frappe.log_error(title=f"access_guard: logging {action} on {doc.doctype} failed")
 
 		frappe.db.after_commit.add(_log)
 
