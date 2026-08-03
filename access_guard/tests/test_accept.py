@@ -128,6 +128,55 @@ class TestAccept(FrappeTestCase):
 		self.assertIsNotNone(record["sid"])
 		self.assertEqual(record["user_email"], "jane.doe@example.com")
 
+	def test_suffix_not_duplicated_when_already_in_name(self):
+		"""Some hub users carry the org in first_name already — the policy
+		suffix must not be appended a second time."""
+		email = "emanuel@aakvatech.com"
+		token = self.keypair.mint_grant_token(
+			user_first_name="Emanuel (consultant)",
+			user_last_name="",
+			user_email=email,
+			transport_token=TRANSPORT_TOKEN,
+		)
+		with patch.dict(frappe.conf, _conf(self.keypair)):
+			self._call_accept(token)
+		self._created_users.append(email)
+
+		user_doc = frappe.get_doc("User", email)
+		self.assertEqual(user_doc.last_name, "")
+		self.assertEqual(user_doc.full_name, "Emanuel (consultant)")
+
+	def test_suffix_match_is_case_insensitive(self):
+		email = "cased@example.com"
+		token = self.keypair.mint_grant_token(
+			user_first_name="Emanuel (CONSULTANT)",
+			user_last_name="",
+			user_email=email,
+			transport_token=TRANSPORT_TOKEN,
+		)
+		with patch.dict(frappe.conf, _conf(self.keypair)):
+			self._call_accept(token)
+		self._created_users.append(email)
+
+		self.assertEqual(frappe.get_doc("User", email).full_name, "Emanuel (CONSULTANT)")
+
+	def test_suffix_matched_in_last_name(self):
+		"""The check spans all name parts, not just first_name."""
+		email = "inlast@example.com"
+		token = self.keypair.mint_grant_token(
+			user_first_name="Emanuel",
+			user_last_name="Doe (consultant)",
+			user_email=email,
+			transport_token=TRANSPORT_TOKEN,
+		)
+		with patch.dict(frappe.conf, _conf(self.keypair)):
+			self._call_accept(token)
+		self._created_users.append(email)
+
+		user_doc = frappe.get_doc("User", email)
+		self.assertEqual(user_doc.last_name, "Doe (consultant)")
+		self.assertEqual(user_doc.full_name, "Emanuel Doe (consultant)")
+
 	def test_replay_second_use_rejected(self):
 		token = self.keypair.mint_grant_token(user_email="replay@example.com")
 		with patch.dict(frappe.conf, _conf(self.keypair)):
