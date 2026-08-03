@@ -16,6 +16,8 @@ from access_guard.protocol import (
 	CLAIM_USER_FIRST_NAME,
 	CLAIM_USER_LAST_NAME,
 	CLAIM_USER_MIDDLE_NAME,
+	POLICY_ADOPT_ENABLED_USERS,
+	POLICY_ADOPTABLE_EMAILS,
 	POLICY_DISALLOW_SIMULTANEOUS_SESSIONS,
 	POLICY_NAME_SUFFIX,
 	AccessProtocolError,
@@ -109,6 +111,8 @@ def accept(claims: dict):
 		last_name,
 		policy.get(POLICY_NAME_SUFFIX),
 		disallow_simultaneous=bool(policy.get(POLICY_DISALLOW_SIMULTANEOUS_SESSIONS)),
+		adoptable=user_email in set(policy.get(POLICY_ADOPTABLE_EMAILS) or []),
+		adopt_enabled=bool(policy.get(POLICY_ADOPT_ENABLED_USERS)),
 	)
 	# Written after login, sid already known - see session_guard.py for the
 	# narrow gap this leaves during post_login() itself.
@@ -152,6 +156,8 @@ def _create_or_reuse_ephemeral_user(
 	last_name: str | None,
 	name_suffix: str,
 	disallow_simultaneous: bool,
+	adoptable: bool = False,
+	adopt_enabled: bool = False,
 ):
 	"""Idempotent create keyed on user_email. Name parts come straight from the
 	hub's User record, not a re-split full name (re-splitting loses middle
@@ -169,7 +175,14 @@ def _create_or_reuse_ephemeral_user(
 	refused, since handing them a fresh System Manager session is the
 	standing-access abuse we prevent. Ephemeral membership is grant-file-derived
 	(ephemeral_users()), never a DB flag: a User row exists iff a live grant
-	names them, so that's the authoritative test."""
+	names them, so that's the authoritative test.
+
+	`adoptable` (policy's adoptable_emails) is the one exception: a site onboarded
+	before access-guard already has a standing account for every consultant, which
+	the refusal above would block forever. It deletes that account and provisions a
+	fresh one below, so the grant file owns the identity from here on. `adopt_enabled`
+	(default off) additionally allows this for an account still *enabled* on the
+	site - the riskier case, since someone may actively be using it."""
 	# Frappe's get_sessions_to_clear falls back to 1 on a falsy value (`or 1`),
 	# so 0 does NOT mean unlimited here - it's as restrictive as 1. There's no
 	# real "unlimited" sentinel in core, so "off" uses a large-enough cap
@@ -180,12 +193,16 @@ def _create_or_reuse_ephemeral_user(
 		from access_guard.grants import ephemeral_users
 
 		if user_email not in ephemeral_users():
-			raise EphemeralUserCollisionError(
-				f"{user_email} is already a standing user on this site; refusing to "
-				"start an ephemeral session for it."
-			)
-		frappe.db.set_value("User", user_email, "simultaneous_sessions", simultaneous_sessions)
-		return user_email
+			enabled = bool(frappe.db.get_value("User", user_email, "enabled"))
+			if not adoptable or (enabled and not adopt_enabled):
+				raise EphemeralUserCollisionError(
+					f"{user_email} is already a standing user on this site; refusing to "
+					"start an ephemeral session for it."
+				)
+			_delete_standing_user(user_email)
+		else:
+			frappe.db.set_value("User", user_email, "simultaneous_sessions", simultaneous_sessions)
+			return user_email
 
 	last_name = last_name or ""
 	suffix = f"({name_suffix})" if name_suffix else ""
@@ -209,6 +226,24 @@ def _create_or_reuse_ephemeral_user(
 
 	user_doc.add_roles(*get_all_roles())
 	return user_doc.name
+
+
+def _delete_standing_user(user_email: str) -> None:
+	"""Delete an adoptable standing account so the caller can provision a fresh
+	ephemeral one under the same email (PROTOCOL.md §3 step 7).
+
+	force=True: the account is years old and owns rows all over the site, so link
+	validation would refuse. Its ToDos/assignments/ownership stamps are accepted
+	collateral - the point is that standing access ends here.
+
+	No commit: delete_doc and User.on_trash don't commit, so this stays in
+	accept()'s transaction and a later failure rolls the deletion back with it.
+
+	STANDARD_USERS are refused outright - core guards these too, but a listed row
+	naming either is a config mistake, and the error should say so."""
+	if user_email in frappe.STANDARD_USERS:
+		raise EphemeralUserCollisionError(f"refusing to adopt {user_email}.")
+	frappe.delete_doc("User", user_email, force=True, ignore_permissions=True)
 
 
 def _start_session(user: str) -> None:

@@ -102,6 +102,8 @@ POLICY_NAME_SUFFIX = "name_suffix"  # appended to ephemeral user's last_name, e.
 POLICY_ACCESS_DISABLED = "access_disabled"  # global kill switch: reap every live grant, refuse new ones
 POLICY_BLACKLISTED_EMAILS = "blacklisted_emails"  # user_email values to reap + refuse, individually
 POLICY_DISALLOW_SIMULTANEOUS_SESSIONS = "disallow_simultaneous_sessions"  # default off: Frappe's own User.simultaneous_sessions default (2) applies; on: capped to 1
+POLICY_ADOPTABLE_EMAILS = "adoptable_emails"  # on collision, delete the standing account and re-provision
+POLICY_ADOPT_ENABLED_USERS = "adopt_enabled_users"  # default off: only a *disabled* standing account is adoptable; on: an enabled one too
 
 MODE_DENY = "deny"
 MODE_WARN = "warn"

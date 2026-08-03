@@ -9,7 +9,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from access_guard.config_utils import policy_path
-from access_guard.grants import read_grant
+from access_guard.grants import all_grants, delete_grant, read_grant
 from access_guard.protocol import (
 	ClientNotConfiguredError,
 	EphemeralUserCollisionError,
@@ -275,6 +275,99 @@ class TestAccept(FrappeTestCase):
 		# no grant file was written for this jti
 		claims = _decode_claims_for_test(token)
 		self.assertIsNone(read_grant(claims["jti"]))
+
+	def _drop_grants_for(self, email):
+		for jti, record in list(all_grants().items()):
+			if record.get("user") == email:
+				delete_grant(jti)
+
+	def _insert_standing_user(self, email, enabled=1, first_name="Standing"):
+		"""A pre-access-guard account: exists in the DB, named by no grant file.
+
+		Drops any grant naming this email, before and after: grants.json is shared
+		across the whole test run, so a leftover record from an earlier test would
+		put the email in ephemeral_users() and send accept() down the reuse path
+		instead of the collision/adoption one under test."""
+		self._drop_grants_for(email)
+		self.addCleanup(self._drop_grants_for, email)
+
+		standing = frappe.new_doc("User")
+		standing.email = email
+		standing.first_name = first_name
+		standing.enabled = enabled
+		standing.send_welcome_email = 0
+		standing.insert(ignore_permissions=True)
+		frappe.db.commit()
+		self._created_users.append(email)
+		return standing
+
+	def _accept_with_policy(self, email, **policy_overrides):
+		policy = dict(TEST_POLICY_DEFAULTS)
+		policy.update(policy_overrides)
+		stub_policy_file(policy)
+		token = self.keypair.mint_grant_token(user_email=email, transport_token=TRANSPORT_TOKEN)
+		with patch.dict(frappe.conf, _conf(self.keypair)):
+			return self._call_accept(token), token
+
+	def test_adoptable_disabled_standing_user_replaced(self):
+		"""A listed, already-disabled standing account is deleted and re-provisioned
+		as ephemeral: the row is new (fresh creation, full roles, name suffix) and a
+		grant file now names it."""
+		email = "adopt.disabled@example.com"
+		original = self._insert_standing_user(email, enabled=0)
+
+		_, token = self._accept_with_policy(email, adoptable_emails=[email])
+
+		self.assertTrue(frappe.db.exists("User", email))
+		user_doc = frappe.get_doc("User", email)
+		# Re-created, not merely edited: creation stamp differs from the original's.
+		self.assertNotEqual(user_doc.creation, original.creation)
+		self.assertEqual(user_doc.enabled, 1)
+		self.assertIn("(consultant)", user_doc.last_name or "")
+		from frappe.core.doctype.user.user import get_all_roles
+
+		self.assertEqual({r.role for r in user_doc.roles}, set(get_all_roles()))
+
+		record = read_grant(_decode_claims_for_test(token)["jti"])
+		self.assertIsNotNone(record)
+		self.assertEqual(record["user"], email)
+
+	def test_adoptable_enabled_standing_user_refused_by_default(self):
+		"""Listed but still ENABLED on the site: refused unless adopt_enabled_users
+		is on, and the standing account survives untouched."""
+		email = "adopt.enabled@example.com"
+		self._insert_standing_user(email, enabled=1)
+
+		result, token = self._accept_with_policy(email, adoptable_emails=[email])
+
+		self.assertEqual(result.get("error", {}).get("code"), EphemeralUserCollisionError.code)
+		self.assertIsNone(read_grant(_decode_claims_for_test(token)["jti"]))
+		self.assertTrue(frappe.db.exists("User", email))
+		self.assertEqual(frappe.db.get_value("User", email, "first_name"), "Standing")
+
+	def test_adoptable_enabled_standing_user_replaced_when_flag_set(self):
+		"""adopt_enabled_users extends adoption to a still-enabled account."""
+		email = "adopt.enabled.ok@example.com"
+		original = self._insert_standing_user(email, enabled=1)
+
+		_, token = self._accept_with_policy(email, adoptable_emails=[email], adopt_enabled_users=True)
+
+		self.assertNotEqual(frappe.db.get_value("User", email, "creation"), original.creation)
+		record = read_grant(_decode_claims_for_test(token)["jti"])
+		self.assertIsNotNone(record)
+		self.assertEqual(record["user"], email)
+
+	def test_unlisted_standing_user_still_refused_when_adoption_configured(self):
+		"""The list is an allowlist, not a global switch: an email absent from it is
+		refused even while another email is adoptable."""
+		email = "not.listed@example.com"
+		self._insert_standing_user(email, enabled=0)
+
+		result, token = self._accept_with_policy(email, adoptable_emails=["someone.else@example.com"])
+
+		self.assertEqual(result.get("error", {}).get("code"), EphemeralUserCollisionError.code)
+		self.assertIsNone(read_grant(_decode_claims_for_test(token)["jti"]))
+		self.assertTrue(frappe.db.exists("User", email))
 
 	def test_returning_ephemeral_user_reused(self):
 		"""A user this guard provisioned (named in a grant file) is reused on a
