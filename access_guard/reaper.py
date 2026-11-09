@@ -174,10 +174,14 @@ def _drop_insights_team_rows(user: str) -> None:
 	"""force=True leaves `Insights Team Member` rows pointing at the deleted
 	User, and a dangling row fails link validation on every later save of that
 	team. Runs after delete_doc, not in on_trash: Insights' User.on_change hook
-	fires mid-delete and re-adds an Insights Admin to the Admin team."""
-	if "insights" not in frappe.get_installed_apps():
-		return
-	frappe.db.delete("Insights Team Member", {"user": user})
+	fires mid-delete and re-adds an Insights Admin to the Admin team.
+
+	Best-effort: a failure here must never block the reap."""
+	try:
+		if "insights" in frappe.get_installed_apps() and frappe.db.table_exists("Insights Team Member"):
+			frappe.db.delete("Insights Team Member", {"user": user})
+	except Exception:
+		pass
 
 
 def _is_ephemeral_namespace_safe(user: str) -> bool:
