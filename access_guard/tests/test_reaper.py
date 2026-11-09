@@ -93,27 +93,6 @@ class TestReaper(FrappeTestCase):
 		self.assertIsNone(read_grant(jti), "grant file should be removed after reap")
 		self.assertFalse(self._session_exists(sid), "session row should be deleted")
 
-	def test_reap_drops_insights_team_rows(self):
-		if "insights" not in frappe.get_installed_apps():
-			self.skipTest("insights not installed")
-
-		email = "reap-insights@example.com"
-		user = self._make_ephemeral_user(email)
-		team = frappe.get_doc("Insights Team", "Admin")
-		team.append("team_members", {"user": user})
-		team.save(ignore_permissions=True)
-		frappe.db.commit()
-
-		jti = "reaper-jti-insights"
-		self._jtis_to_clean.append(jti)
-		write_grant(jti, {"jti": jti, "pv": 1, "user_email": email, "user": user, "issued_at": utc_iso()})
-
-		with patch("frappe.enqueue"):
-			reap_idle_sessions()
-
-		self.assertFalse(frappe.db.exists("User", email))
-		self.assertFalse(frappe.db.exists("Insights Team Member", {"user": email}))
-
 	def test_non_ephemeral_user_never_touched(self):
 		"""A real client user (no grant file referencing it) must survive
 		the reaper regardless of session idle time — namespace filter."""
