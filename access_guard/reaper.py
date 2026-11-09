@@ -164,9 +164,20 @@ def _reap_grants(jtis: list[str], *, reason: str, user: str | None) -> None:
 		delete_grant(jti)
 	if user and frappe.db.exists("User", user):
 		frappe.delete_doc("User", user, force=True, ignore_permissions=True)
+		_drop_insights_team_rows(user)
 		frappe.db.commit()
 	for jti in jtis:
 		log_session_event(jti, "logout", reason=reason)
+
+
+def _drop_insights_team_rows(user: str) -> None:
+	"""force=True leaves `Insights Team Member` rows pointing at the deleted
+	User, and a dangling row fails link validation on every later save of that
+	team. Runs after delete_doc, not in on_trash: Insights' User.on_change hook
+	fires mid-delete and re-adds an Insights Admin to the Admin team."""
+	if "insights" not in frappe.get_installed_apps():
+		return
+	frappe.db.delete("Insights Team Member", {"user": user})
 
 
 def _is_ephemeral_namespace_safe(user: str) -> bool:
